@@ -1,0 +1,8 @@
+{
+  "name": "WORLCORE TRADE",
+  "description": "Institutional Black & Gold Cryptocurrency and Stock Trading Platform with Paper Trading Terminal, CoreToken (CT) Ecosystem, and Real-time Analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

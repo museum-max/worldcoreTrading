@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with paper trading demo balances and wallet credentials",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "photoURL": { "type": "string", "maxLength": 1024 },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "walletAddress": { "type": "string", "maxLength": 64 },
+        "demoUsdBalance": { "type": "string", "maxLength": 32 },
+        "demoEthBalance": { "type": "string", "maxLength": 32 },
+        "demoCtBalance": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid"]
+    },
+    "Trade": {
+      "title": "Trade",
+      "description": "Simulated paper trade execution record",
+      "type": "object",
+      "properties": {
+        "userUid": { "type": "string", "maxLength": 128 },
+        "symbol": { "type": "string", "maxLength": 32 },
+        "type": { "type": "string", "enum": ["market", "limit"] },
+        "side": { "type": "string", "enum": ["buy", "sell"] },
+        "price": { "type": "string", "maxLength": 32 },
+        "amount": { "type": "string", "maxLength": 32 },
+        "total": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "enum": ["filled", "open", "cancelled"] },
+        "pnl": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userUid", "symbol", "type", "side", "price", "amount", "total", "status"]
+    },
+    "PriceAlert": {
+      "title": "PriceAlert",
+      "description": "Target price alert threshold set by a user",
+      "type": "object",
+      "properties": {
+        "userUid": { "type": "string", "maxLength": 128 },
+        "symbol": { "type": "string", "maxLength": 32 },
+        "targetPrice": { "type": "string", "maxLength": 32 },
+        "condition": { "type": "string", "enum": ["ABOVE", "BELOW"] },
+        "status": { "type": "string", "enum": ["ACTIVE", "TRIGGERED"] },
+        "note": { "type": "string", "maxLength": 256 },
+        "triggeredAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userUid", "symbol", "targetPrice", "condition", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile records containing demo balances and credentials"
+    },
+    "/trades/{tradeId}": {
+      "schema": { "$ref": "#/entities/Trade" },
+      "description": "Simulated paper trading history and executions"
+    },
+    "/priceAlerts/{alertId}": {
+      "schema": { "$ref": "#/entities/PriceAlert" },
+      "description": "Configured user price alerts and target thresholds"
+    }
+  }
+}
