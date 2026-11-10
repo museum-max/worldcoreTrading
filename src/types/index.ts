@@ -86,4 +86,43 @@ export type PageView =
   | 'admin'
   | 'settings'
   | 'about'
-  | 'alerts';
+  | 'alerts'
+  | 'nfts';
+
+export interface NftItem {
+  id: string;
+  tokenId: string;
+  name: string;
+  edition: string;
+  collection: string;
+  description: string;
+  image: string;
+  rarity: 'Sovereign Mythic' | 'Mythic Gold' | 'Legendary' | 'Rare';
+  rarityColor: string;
+  priceCt: number;
+  priceEth: number;
+  multiplier: string;
+  powerRating: number;
+  standard: 'ERC-721' | 'ERC-1155';
+  contractAddress: string;
+  blockchain: string;
+  totalMinted: number;
+  maxSupply: number;
+  attributes: { trait_type: string; value: string }[];
+}
+
+export interface UserNft {
+  id: string;
+  userUid: string;
+  tokenId: string;
+  name: string;
+  edition: string;
+  collection: string;
+  image: string;
+  rarity: string;
+  pricePaid: string;
+  currency: 'CT' | 'ETH' | 'USD';
+  txHash: string;
+  acquiredAt: string;
+  ownerAddress?: string;
+}

@@ -4,6 +4,7 @@ import {
   getOrCreateUser,
   getUser,
   updateUserBalances,
+  updateUserWallet,
   getAllUsers,
   getUserTrades,
   getAllTrades,
@@ -21,6 +22,9 @@ import {
   markAlertTriggered,
   resetPriceAlert,
 } from '../db/users.ts';
+import { ai } from './gemini.ts';
+import { getFallbackNews } from './newsFallback.ts';
+import { NFT_CATALOG } from '../data/nftCatalog.ts';
 
 export const apiRouter = express.Router();
 apiRouter.use(express.json());
@@ -308,6 +312,118 @@ apiRouter.post('/user/reset-balance', requireAuth, async (req: AuthRequest, res)
   } catch (error: any) {
     console.error('Error resetting balance:', error);
     res.status(500).json({ error: error.message || 'Failed to reset balance' });
+  }
+});
+
+// Link Web3 Wallet Address in Realtime
+apiRouter.post('/user/link-wallet', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const { walletAddress } = req.body;
+    if (!walletAddress || !walletAddress.startsWith('0x')) {
+      return res.status(400).json({ error: 'Valid 0x Ethereum wallet address required' });
+    }
+
+    const updated = await updateUserWallet(uid, walletAddress);
+    await addAdminLog(
+      uid,
+      'WALLET_LINKED',
+      `User ${uid} bound Web3 wallet address ${walletAddress} in realtime (IP: ${req.ip || '127.0.0.1'}).`
+    );
+    res.json({ success: true, user: updated });
+  } catch (error: any) {
+    console.error('Error linking wallet:', error);
+    res.status(500).json({ error: error.message || 'Failed to link wallet' });
+  }
+});
+
+// NFT Catalog endpoint
+apiRouter.get('/nft/catalog', (req, res) => {
+  res.json({ catalog: NFT_CATALOG });
+});
+
+// Buy / Mint Sovereign NFT Relic
+apiRouter.post('/nft/buy', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const { nftId, currency } = req.body; // currency: 'CT' | 'ETH'
+
+    const nft = NFT_CATALOG.find((n) => n.id === nftId);
+    if (!nft) {
+      return res.status(404).json({ error: 'NFT item not found in catalog' });
+    }
+
+    const user = await getUser(uid);
+    if (!user) {
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+
+    let currentCt = parseFloat(user.demoCtBalance || '0');
+    let currentEth = parseFloat(user.demoEthBalance || '0');
+
+    let pricePaid = '';
+    const selectedCurrency = currency === 'ETH' ? 'ETH' : 'CT';
+
+    if (selectedCurrency === 'ETH') {
+      if (currentEth < nft.priceEth) {
+        return res.status(400).json({
+          error: `Insufficient simulated ETH balance. You need ${nft.priceEth} ETH, but have ${currentEth.toFixed(4)} ETH.`,
+        });
+      }
+      currentEth -= nft.priceEth;
+      pricePaid = `${nft.priceEth} ETH`;
+    } else {
+      if (currentCt < nft.priceCt) {
+        return res.status(400).json({
+          error: `Insufficient simulated CT balance. You need ${nft.priceCt} CT, but have ${currentCt.toFixed(2)} CT.`,
+        });
+      }
+      currentCt -= nft.priceCt;
+      pricePaid = `${nft.priceCt} CT`;
+    }
+
+    // Update balances in Cloud SQL
+    const updatedUser = await updateUserBalances(uid, {
+      demoEthBalance: currentEth.toFixed(4),
+      demoCtBalance: currentCt.toFixed(2),
+    });
+
+    const txHash =
+      '0x' +
+      Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+
+    const userNft = {
+      id: `nft_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      userUid: uid,
+      tokenId: nft.tokenId,
+      name: nft.name,
+      edition: nft.edition,
+      collection: nft.collection,
+      image: nft.image,
+      rarity: nft.rarity,
+      pricePaid,
+      currency: selectedCurrency,
+      txHash,
+      ownerAddress:
+        user.walletAddress || `0x${uid.substring(0, 10)}...${uid.substring(Math.max(0, uid.length - 4))}`,
+      acquiredAt: new Date().toISOString(),
+    };
+
+    await addAdminLog(
+      uid,
+      'NFT_ACQUIRED',
+      `User ${uid} acquired ${nft.name} (#${nft.tokenId}) for ${pricePaid} (Tx: ${txHash.slice(0, 10)}...).`
+    );
+
+    res.json({
+      success: true,
+      user: updatedUser,
+      userNft,
+      txHash,
+    });
+  } catch (error: any) {
+    console.error('Error buying NFT:', error);
+    res.status(500).json({ error: error.message || 'Failed to process NFT purchase' });
   }
 });
 
@@ -640,4 +756,158 @@ apiRouter.post('/alerts/:id/reset', requireAuth, async (req: AuthRequest, res) =
     res.status(500).json({ error: error.message || 'Failed to reset alert' });
   }
 });
+
+// In-memory cache for news items (5 minute TTL)
+interface CachedNews {
+  timestamp: number;
+  data: any;
+}
+const newsCache: Record<string, CachedNews> = {};
+const NEWS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Market News Feed with Google Search Grounding
+apiRouter.get('/news', async (req, res) => {
+  const category = (req.query.category as string) || 'all';
+  const forceRefresh = req.query.refresh === 'true';
+
+  if (!forceRefresh && newsCache[category] && Date.now() - newsCache[category].timestamp < NEWS_CACHE_TTL_MS) {
+    return res.json({ ...newsCache[category].data, cached: true });
+  }
+
+  try {
+    let focusTopic = 'cryptocurrency markets (Bitcoin, Ethereum, Solana, Layer 2s, DeFi, CoreToken) and US equities (Tech stocks, Nvidia, S&P 500, Nasdaq, Federal Reserve interest rates)';
+    if (category === 'crypto') {
+      focusTopic = 'cryptocurrency markets, Bitcoin price movements, Ethereum spot ETF inflows, Layer 1/2 developments, CoreToken ecosystem, and regulatory decisions';
+    } else if (category === 'stock') {
+      focusTopic = 'US stock market, semiconductor rally, Nvidia, Apple, Microsoft, corporate earnings, and Wall Street equity indices';
+    } else if (category === 'macro') {
+      focusTopic = 'macroeconomics, Federal Reserve policy, inflation reports, bond yield dynamics, and global central bank rate decisions';
+    }
+
+    const prompt = `You are a financial news intelligence analyst for institutional trading terminal WORLCORE TRADE.
+Using real-time Google Search grounding, retrieve and summarize the latest, breaking market developments from the last 24 to 48 hours regarding ${focusTopic}.
+
+Provide 6 to 8 concise, high-impact stories.
+Return strictly a valid JSON array of objects without Markdown formatting or code fences:
+[
+  {
+    "id": "news_1",
+    "title": "Institutional Headline Here",
+    "summary": "2-3 concise sentences detailing market impact, key figures, and trader sentiment.",
+    "category": "crypto",
+    "sentiment": "bullish",
+    "source": "Bloomberg",
+    "timestamp": "25m ago",
+    "relatedSymbols": ["BTC", "ETH"]
+  }
+]`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    const rawText = response.text || '';
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const webSearchQueries = response.candidates?.[0]?.groundingMetadata?.webSearchQueries || [];
+
+    const extractedSources = groundingChunks
+      .map((c: any) => c.web)
+      .filter((w: any) => Boolean(w && w.uri))
+      .map((w: any) => ({
+        title: w.title || 'Market Source',
+        uri: w.uri,
+      }));
+
+    let articles: any[] = [];
+    try {
+      const cleanJson = rawText
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
+      const firstBracket = cleanJson.indexOf('[');
+      const lastBracket = cleanJson.lastIndexOf(']');
+      if (firstBracket !== -1 && lastBracket !== -1) {
+        articles = JSON.parse(cleanJson.substring(firstBracket, lastBracket + 1));
+      } else {
+        articles = JSON.parse(cleanJson);
+      }
+    } catch (parseErr) {
+      console.warn('Could not parse Gemini JSON directly, applying structured fallback:', parseErr);
+    }
+
+    if (!Array.isArray(articles) || articles.length === 0) {
+      throw new Error('Unable to extract structured articles from search grounding output');
+    }
+
+    // Attach URLs from grounding sources to articles if available
+    articles = articles.map((art, idx) => ({
+      id: art.id || `news_${Date.now()}_${idx}`,
+      title: art.title || 'Market Intelligence Update',
+      summary: art.summary || 'Real-time financial asset market action update.',
+      category: art.category || (category === 'all' ? (idx % 2 === 0 ? 'crypto' : 'stock') : category),
+      sentiment: art.sentiment || 'neutral',
+      source: art.source || (extractedSources[idx % (extractedSources.length || 1)]?.title || 'Financial Press'),
+      timestamp: art.timestamp || 'Recent',
+      url: art.url || (extractedSources[idx % (extractedSources.length || 1)]?.uri || 'https://news.google.com'),
+      relatedSymbols: Array.isArray(art.relatedSymbols) ? art.relatedSymbols : ['BTC'],
+    }));
+
+    const payload = {
+      success: true,
+      articles,
+      groundingSources: extractedSources.slice(0, 8),
+      searchQueries: webSearchQueries,
+      lastUpdated: new Date().toISOString(),
+      isGrounded: true,
+    };
+
+    newsCache[category] = {
+      timestamp: Date.now(),
+      data: payload,
+    };
+
+    res.json({ ...payload, cached: false });
+  } catch (error: any) {
+    const isQuotaError =
+      error?.status === 'RESOURCE_EXHAUSTED' ||
+      error?.message?.includes('429') ||
+      error?.message?.includes('quota') ||
+      error?.message?.includes('RESOURCE_EXHAUSTED');
+
+    if (isQuotaError) {
+      console.warn('Gemini Search Grounding rate limit reached (429/quota). Serving cached institutional news stream.');
+    } else {
+      console.warn('Gemini Search Grounding note:', error.message || error);
+    }
+
+    const fallbackArticles = getFallbackNews(category);
+    const fallbackPayload = {
+      success: true,
+      articles: fallbackArticles,
+      groundingSources: [
+        { title: 'Bloomberg Crypto', uri: 'https://www.bloomberg.com/crypto' },
+        { title: 'Reuters Technology', uri: 'https://www.reuters.com/technology' },
+        { title: 'CoinDesk Intelligence', uri: 'https://www.coindesk.com' },
+        { title: 'Financial Times Markets', uri: 'https://www.ft.com' },
+      ],
+      searchQueries: ['cryptocurrency institutional market trends', 'stock market earnings news today'],
+      lastUpdated: new Date().toISOString(),
+      isFallback: true,
+      isGrounded: false,
+    };
+
+    // Cache fallback for 10 minutes to prevent repeated API rate-limit hammering
+    newsCache[category] = {
+      timestamp: Date.now() + (isQuotaError ? 10 * 60 * 1000 : 2 * 60 * 1000),
+      data: fallbackPayload,
+    };
+
+    res.json(fallbackPayload);
+  }
+});
+
 

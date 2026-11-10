@@ -15,6 +15,7 @@ import {
   Sparkles,
   Info,
   Bell,
+  Gem,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
@@ -33,11 +34,13 @@ export const Navbar: React.FC = () => {
     { id: 'alerts', label: 'Alerts', icon: <Bell className="w-4 h-4 text-[#D4AF37]" />, badge: unreadAlertsCount > 0 ? `${unreadAlertsCount}` : undefined },
     { id: 'portfolio', label: 'Portfolio', icon: <Wallet className="w-4 h-4" /> },
     { id: 'rewards', label: 'CT Rewards', icon: <Coins className="w-4 h-4 text-[#D4AF37]" />, badge: 'HOT' },
+    { id: 'nfts', label: 'NFT Vault', icon: <Gem className="w-4 h-4 text-[#D4AF37]" />, badge: 'NEW' },
     { id: 'watchlist', label: 'Watchlist', icon: <Star className="w-4 h-4" /> },
     { id: 'history', label: 'History', icon: <Clock className="w-4 h-4" /> },
     { id: 'admin', label: 'Admin', icon: <Shield className="w-4 h-4 text-[#D4AF37]" /> },
     { id: 'about', label: 'About', icon: <Info className="w-4 h-4" /> },
   ];
+
 
   const handleNav = (id: PageView) => {
     setActivePage(id);
@@ -265,6 +268,16 @@ export const Navbar: React.FC = () => {
                   <div className="py-1">
                     <button
                       onClick={() => {
+                        setAuthModalOpen(true);
+                        setProfileOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2 text-xs text-[#D4AF37] hover:bg-[#D4AF37]/10 transition-colors font-medium"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      Register / Switch Account
+                    </button>
+                    <button
+                      onClick={() => {
                         logout();
                         setProfileOpen(false);
                       }}
@@ -283,7 +296,7 @@ export const Navbar: React.FC = () => {
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#D4AF37] to-[#F59E0B] hover:from-[#E6BE44] hover:to-[#FBBF24] text-black font-semibold text-xs rounded-lg shadow-lg shadow-[#D4AF37]/20 transition-all font-mono"
             >
               <Wallet className="w-4 h-4" />
-              <span>Connect / Sign In</span>
+              <span>Register / Sign In</span>
             </button>
           )}
 

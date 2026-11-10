@@ -51,6 +51,26 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userUid", "symbol", "targetPrice", "condition", "status"]
+    },
+    "UserNft": {
+      "title": "UserNft",
+      "description": "Minted or acquired WorldCore Sovereign NFT relic",
+      "type": "object",
+      "properties": {
+        "userUid": { "type": "string", "maxLength": 128 },
+        "tokenId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 128 },
+        "edition": { "type": "string", "maxLength": 64 },
+        "collection": { "type": "string", "maxLength": 128 },
+        "image": { "type": "string", "maxLength": 1024 },
+        "rarity": { "type": "string", "maxLength": 64 },
+        "pricePaid": { "type": "string", "maxLength": 64 },
+        "currency": { "type": "string", "enum": ["CT", "ETH", "USD"] },
+        "txHash": { "type": "string", "maxLength": 128 },
+        "ownerAddress": { "type": "string", "maxLength": 64 },
+        "acquiredAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userUid", "tokenId", "name", "pricePaid", "currency"]
     }
   },
   "firestore": {
@@ -65,6 +85,11 @@
     "/priceAlerts/{alertId}": {
       "schema": { "$ref": "#/entities/PriceAlert" },
       "description": "Configured user price alerts and target thresholds"
+    },
+    "/user_nfts/{nftId}": {
+      "schema": { "$ref": "#/entities/UserNft" },
+      "description": "User owned WorldCore NFT collectibles and certificates"
     }
   }
 }
+

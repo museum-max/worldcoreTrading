@@ -49,5 +49,14 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.userUid == request.auth.uid;
       allow update, delete: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
     }
+
+    // User NFTs collection
+    match /user_nfts/{nftId} {
+      allow get: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && request.resource.data.userUid == request.auth.uid;
+      allow update, delete: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
+    }
   }
 }
+

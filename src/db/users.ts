@@ -44,11 +44,29 @@ export async function getOrCreateUser(
         demoEthBalance: '10.00',
         demoCtBalance: '25000.00',
       })
+      .onConflictDoUpdate({
+        target: users.uid,
+        set: {
+          ...(email ? { email } : {}),
+          ...(displayName ? { displayName } : {}),
+          ...(photoURL ? { photoURL } : {}),
+          ...(walletAddress ? { walletAddress } : {}),
+          updatedAt: new Date(),
+        },
+      })
       .returning();
 
     return result[0];
   } catch (error) {
-    console.error('getOrCreateUser database query failed:', error);
+    console.warn('getOrCreateUser handled conflict/race condition, checking existing record:', error);
+    try {
+      const fallback = await db.select().from(users).where(eq(users.uid, uid));
+      if (fallback.length > 0) {
+        return fallback[0];
+      }
+    } catch (fallbackErr) {
+      console.warn('Fallback select failed:', fallbackErr);
+    }
     throw new Error('Database query failed for user retrieval.', { cause: error });
   }
 }
@@ -80,6 +98,23 @@ export async function updateUserBalances(
   } catch (error) {
     console.error('updateUserBalances database query failed:', error);
     throw new Error('Database query failed for balance update.', { cause: error });
+  }
+}
+
+export async function updateUserWallet(uid: string, walletAddress: string) {
+  try {
+    const result = await db
+      .update(users)
+      .set({
+        walletAddress,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.uid, uid))
+      .returning();
+    return result[0];
+  } catch (error) {
+    console.error('updateUserWallet database query failed:', error);
+    throw new Error('Database query failed for wallet update.', { cause: error });
   }
 }
 

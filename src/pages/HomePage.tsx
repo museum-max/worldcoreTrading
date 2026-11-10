@@ -11,9 +11,11 @@ import {
   Globe2,
   RefreshCw,
   Coins,
+  Gem,
 } from 'lucide-react';
 import { useTrading } from '../context/TradingContext.tsx';
 import { useAuth } from '../context/AuthContext.tsx';
+import { MarketNewsFeed } from '../components/MarketNewsFeed.tsx';
 
 export const HomePage: React.FC = () => {
   const { markets, setActiveSymbol, setActivePage, setAuthModalOpen } = useTrading();
@@ -219,7 +221,7 @@ export const HomePage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-2">
+              <div className="pt-2 flex flex-wrap gap-3">
                 <button
                   onClick={() => setActivePage('rewards')}
                   className="px-6 py-3 bg-[#D4AF37] hover:bg-[#E6BE44] text-black font-bold text-xs rounded-xl shadow-lg shadow-[#D4AF37]/20 flex items-center gap-2 transition-all"
@@ -227,7 +229,15 @@ export const HomePage: React.FC = () => {
                   <span>Go to CT Rewards Center</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
+                <button
+                  onClick={() => setActivePage('nfts')}
+                  className="px-6 py-3 bg-[#111726] hover:bg-[#1A2338] text-white border border-[#D4AF37]/50 font-bold text-xs rounded-xl shadow-lg flex items-center gap-2 transition-all font-mono"
+                >
+                  <Gem className="w-4 h-4 text-[#D4AF37]" />
+                  <span>Explore NFT Relics & Download</span>
+                </button>
               </div>
+
             </div>
 
             {/* Visual Token Card */}
@@ -278,6 +288,9 @@ export const HomePage: React.FC = () => {
           </div>
         </div>
       </section>
+
+      {/* Market Intelligence News Wire (Google Search Grounded) */}
+      <MarketNewsFeed />
 
       {/* Features Grid */}
       <section className="py-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

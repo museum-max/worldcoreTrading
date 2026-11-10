@@ -14,15 +14,28 @@ import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
 
 export const ProfilePage: React.FC = () => {
-  const { user, firebaseUser, web3Account, logout, connectWeb3Wallet } = useAuth();
+  const { user, firebaseUser, web3Account, logout, connectWeb3Wallet, linkWeb3Wallet } = useAuth();
   const { setAuthModalOpen, addToast } = useTrading();
   const [copied, setCopied] = useState<boolean>(false);
+  const [linking, setLinking] = useState<boolean>(false);
 
   const copyAddress = (addr: string) => {
     navigator.clipboard.writeText(addr);
     setCopied(true);
     addToast('info', 'Address Copied', 'Wallet address copied to clipboard');
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleBindWallet = async () => {
+    setLinking(true);
+    try {
+      await linkWeb3Wallet();
+      addToast('success', 'Web3 Wallet Linked in Realtime', 'Your MetaMask wallet address is now securely bound to this account.');
+    } catch (err: any) {
+      addToast('error', 'Binding Failed', err.message || 'Could not bind Web3 wallet.');
+    } finally {
+      setLinking(false);
+    }
   };
 
   return (
@@ -116,17 +129,28 @@ export const ProfilePage: React.FC = () => {
                     <span className="text-emerald-400 font-bold">EIP-191 personal_sign</span>
                   </div>
                 </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    onClick={handleBindWallet}
+                    disabled={linking}
+                    className="px-3.5 py-1.5 bg-[#141C2C] hover:bg-[#1E283D] border border-[#D4AF37]/40 text-[#D4AF37] rounded-xl text-xs font-mono transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <span>{linking ? 'Binding...' : 'Update / Link New MetaMask Address'}</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="text-center py-4 space-y-3">
                 <p className="text-xs text-gray-400 font-mono">
-                  No Web3 wallet currently bound. Connect MetaMask to link your on-chain identity.
+                  No Web3 wallet currently bound. Connect MetaMask to link your on-chain identity in realtime.
                 </p>
                 <button
-                  onClick={() => connectWeb3Wallet()}
-                  className="px-4 py-2 bg-[#1A2338] hover:bg-[#202B44] border border-[#D4AF37]/40 text-[#D4AF37] rounded-xl font-mono text-xs font-semibold"
+                  onClick={handleBindWallet}
+                  disabled={linking}
+                  className="px-5 py-2.5 bg-gradient-to-r from-[#D4AF37] to-[#F59E0B] text-black font-mono text-xs font-bold rounded-xl shadow-lg shadow-[#D4AF37]/20 transition-all disabled:opacity-50"
                 >
-                  Connect MetaMask
+                  {linking ? 'Binding Web3 Wallet...' : 'Link MetaMask to Account in Realtime'}
                 </button>
               </div>
             )}
