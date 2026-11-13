@@ -23,6 +23,7 @@ import { SettingsPage } from './pages/SettingsPage.tsx';
 import { AboutPage } from './pages/AboutPage.tsx';
 import { AlertsPage } from './pages/AlertsPage.tsx';
 import { NftVaultPage } from './pages/NftVaultPage.tsx';
+import { CoreTokenPage } from './pages/CoreTokenPage.tsx';
 import { PriceAlertModal } from './components/PriceAlertModal.tsx';
 import { TriggeredAlertBanner } from './components/TriggeredAlertBanner.tsx';
 
@@ -41,6 +42,8 @@ const AppContent: React.FC = () => {
         return <PortfolioPage />;
       case 'rewards':
         return <RewardsPage />;
+      case 'token':
+        return <CoreTokenPage />;
       case 'nfts':
         return <NftVaultPage />;
       case 'watchlist':

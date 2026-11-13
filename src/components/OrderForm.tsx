@@ -168,7 +168,12 @@ export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) =
         {/* Available Balance */}
         <div className="flex items-center gap-1.5 text-right">
           <span className="text-[11px] text-gray-400 font-mono">
-            Avail: <strong className="text-white">${available.val.toLocaleString()}</strong> {available.unit}
+            Avail:{' '}
+            <strong className="text-white">
+              {available.unit === 'USD' ? '$' : ''}
+              {available.val.toLocaleString(undefined, { maximumFractionDigits: available.unit === 'USD' ? 2 : 4 })}
+            </strong>{' '}
+            {available.unit}
           </span>
           <button
             onClick={resetBalances}

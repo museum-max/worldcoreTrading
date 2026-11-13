@@ -10,9 +10,12 @@ import {
   Server,
   RefreshCw,
   Loader2,
+  ScrollText,
+  Gift,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
+import { RewardCampaign } from '../types/index.ts';
 
 interface AdminStats {
   totalUsers: number;
@@ -35,12 +38,22 @@ interface UserRow {
   createdAt: string;
 }
 
+interface AdminLogRow {
+  id: number;
+  adminUid: string;
+  action: string;
+  details: string;
+  createdAt: string;
+}
+
 export const AdminPage: React.FC = () => {
   const { user, getAuthHeader } = useAuth();
-  const { addToast, markets } = useTrading();
+  const { markets, setActivePage } = useTrading();
 
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [userList, setUserList] = useState<UserRow[]>([]);
+  const [logs, setLogs] = useState<AdminLogRow[]>([]);
+  const [campaigns, setCampaigns] = useState<RewardCampaign[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [search, setSearch] = useState<string>('');
 
@@ -71,6 +84,20 @@ export const AdminPage: React.FC = () => {
       if (usersRes.ok) {
         const usersData = await usersRes.json();
         setUserList(usersData.users || []);
+      }
+
+      // Admin Activity Logs
+      const logsRes = await fetch('/api/admin/logs', { headers });
+      if (logsRes.ok) {
+        const logsData = await logsRes.json();
+        setLogs(logsData.logs || []);
+      }
+
+      // Reward Campaigns
+      const campRes = await fetch('/api/rewards');
+      if (campRes.ok) {
+        const campData = await campRes.json();
+        setCampaigns(campData.campaigns || []);
       }
     } catch (e) {
       console.warn('Admin fetch fallback:', e);
@@ -283,6 +310,81 @@ export const AdminPage: React.FC = () => {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Reward Campaigns & Admin Activity Audit Logs */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+        {/* Reward Campaign Oversight */}
+        <div className="bg-[#090D14] border border-[#1A2234] rounded-2xl overflow-hidden shadow-xl">
+          <div className="p-4 bg-[#0D121D] border-b border-[#1A2234] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Gift className="w-4 h-4 text-[#D4AF37]" />
+              <h3 className="font-brand text-sm font-bold text-white uppercase tracking-wider">
+                CT Reward Campaigns ({campaigns.length})
+              </h3>
+            </div>
+            <button
+              onClick={() => setActivePage('rewards')}
+              className="text-[11px] font-mono text-[#D4AF37] hover:underline"
+            >
+              Open Rewards Center
+            </button>
+          </div>
+          <div className="divide-y divide-[#1A2234]/50 max-h-80 overflow-y-auto font-mono text-xs">
+            {campaigns.length === 0 ? (
+              <div className="p-6 text-center text-gray-400">No reward campaigns configured.</div>
+            ) : (
+              campaigns.map((camp) => (
+                <div key={camp.id} className="p-4 flex items-center justify-between gap-3 hover:bg-white/[0.02]">
+                  <div className="min-w-0">
+                    <span className="font-bold text-white block truncate">{camp.title}</span>
+                    <span className="text-[10px] text-gray-400">
+                      Key: {camp.campaignKey} • Category: {camp.category}
+                    </span>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-[#D4AF37] font-bold block">+{camp.ctReward}</span>
+                    <span className="text-[10px] text-emerald-400">+{camp.points} PTS</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Admin Audit Activity Logs */}
+        <div className="bg-[#090D14] border border-[#1A2234] rounded-2xl overflow-hidden shadow-xl">
+          <div className="p-4 bg-[#0D121D] border-b border-[#1A2234] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ScrollText className="w-4 h-4 text-sky-400" />
+              <h3 className="font-brand text-sm font-bold text-white uppercase tracking-wider">
+                Admin & Security Activity Logs
+              </h3>
+            </div>
+            <span className="text-[10px] font-mono text-gray-400">Cloud SQL Audit Trail</span>
+          </div>
+          <div className="divide-y divide-[#1A2234]/50 max-h-80 overflow-y-auto font-mono text-xs">
+            {logs.length === 0 ? (
+              <div className="p-6 text-center text-gray-400">
+                No audit events logged or admin role authorization required.
+              </div>
+            ) : (
+              logs.map((log) => (
+                <div key={log.id} className="p-4 space-y-1 hover:bg-white/[0.02]">
+                  <div className="flex items-center justify-between">
+                    <span className="px-2 py-0.5 rounded bg-[#141C2C] text-[#D4AF37] font-bold text-[10px]">
+                      {log.action}
+                    </span>
+                    <span className="text-[10px] text-gray-500">
+                      {log.createdAt ? new Date(log.createdAt).toLocaleString() : ''}
+                    </span>
+                  </div>
+                  <p className="text-gray-300 text-[11px] leading-relaxed">{log.details}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -15,9 +15,14 @@ import {
   Eye,
   EyeOff,
   Check,
+  Link2,
+  ExternalLink,
+  QrCode,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
+import { REOWN_WALLETCONNECT_PAY } from '../config/coreTokenContract.ts';
+import { ReownWalletConnectCard } from '../components/ReownWalletConnectCard.tsx';
 
 export const AuthModal: React.FC = () => {
   const {
@@ -47,6 +52,7 @@ export const AuthModal: React.FC = () => {
   const [loadingStep, setLoadingStep] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [hasMetaMask, setHasMetaMask] = useState<boolean>(false);
+  const [showReownGateway, setShowReownGateway] = useState<boolean>(false);
 
   // Check if MetaMask is present in window
   useEffect(() => {
@@ -430,6 +436,31 @@ export const AuthModal: React.FC = () => {
                   <Sparkles className="w-3 h-3 text-[#D4AF37]" />
                   <span>Register with Sovereign Whale Address (0x71C...49A2)</span>
                 </button>
+
+                {/* Reown / WalletConnect Pay Gateway */}
+                <div className="pt-1 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <a
+                      href={REOWN_WALLETCONNECT_PAY.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-2.5 px-3 bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 border border-sky-400/50 text-sky-200 rounded-xl text-[11px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all"
+                    >
+                      <Link2 className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Reown WalletConnect</span>
+                      <ExternalLink className="w-3 h-3 text-sky-400" />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setShowReownGateway((prev) => !prev)}
+                      className="py-2.5 px-3 bg-[#0D121D] hover:bg-[#141C2C] border border-[#1A2234] text-gray-200 rounded-xl text-[11px] font-mono flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <QrCode className="w-3.5 h-3.5 text-[#D4AF37]" />
+                      <span>{showReownGateway ? 'Hide QR' : 'WalletConnect QR'}</span>
+                    </button>
+                  </div>
+                  {showReownGateway && <ReownWalletConnectCard variant="compact" />}
+                </div>
               </div>
             )}
 
@@ -550,6 +581,29 @@ export const AuthModal: React.FC = () => {
               </div>
               <span>Connect & Sign In with Web3 Wallet</span>
             </button>
+
+            {/* Reown / WalletConnect Pay Gateway */}
+            <div className="grid grid-cols-2 gap-2">
+              <a
+                href={REOWN_WALLETCONNECT_PAY.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="py-2.5 px-3 bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 border border-sky-400/50 text-sky-200 rounded-xl text-[11px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all"
+              >
+                <Link2 className="w-3.5 h-3.5 text-sky-400" />
+                <span>Reown WalletConnect</span>
+                <ExternalLink className="w-3 h-3 text-sky-400" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setShowReownGateway((prev) => !prev)}
+                className="py-2.5 px-3 bg-[#0D121D] hover:bg-[#141C2C] border border-[#1A2234] text-gray-200 rounded-xl text-[11px] font-mono flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <QrCode className="w-3.5 h-3.5 text-[#D4AF37]" />
+                <span>{showReownGateway ? 'Hide QR' : 'Scan QR'}</span>
+              </button>
+            </div>
+            {showReownGateway && <ReownWalletConnectCard variant="compact" />}
 
             {/* Email Form Toggle / Sign In */}
             <div className="pt-2">

@@ -198,7 +198,7 @@ export const NftVaultPage: React.FC = () => {
         pricePaid,
         currency: purchaseCurrency,
         txHash: '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(''),
-        ownerAddress: user.walletAddress || '0x71C934Ea8451b68233C29158309530f9A937021',
+        ownerAddress: user.walletAddress || '0x71C934eA8451b68233C29158309530f9A9370210',
         acquiredAt: new Date().toISOString(),
       };
 

@@ -3,6 +3,21 @@ import confetti from 'canvas-confetti';
 import { useAuth } from './AuthContext.tsx';
 import { MarketAsset, TradeOrder, PageView, PriceAlert } from '../types/index.ts';
 
+async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 2): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(url, options);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 interface Toast {
   id: string;
   type: 'success' | 'error' | 'info';
@@ -61,7 +76,7 @@ interface TradingContextType {
 const TradingContext = createContext<TradingContextType | undefined>(undefined);
 
 export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, getAuthHeader, updateBalancesLocally } = useAuth();
+  const { user, loading: authLoading, getAuthHeader, updateBalancesLocally } = useAuth();
   const [markets, setMarkets] = useState<MarketAsset[]>([]);
   const [activeSymbol, setActiveSymbol] = useState<string>('BTC/USDT');
   const [orders, setOrders] = useState<TradeOrder[]>([]);
@@ -155,40 +170,40 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Fetch price alerts
   const fetchAlerts = useCallback(async () => {
-    if (!user) return;
+    if (!user?.uid) return;
     try {
       const headers = await getAuthHeader();
-      const res = await fetch('/api/alerts', { headers });
+      const res = await fetchWithRetry('/api/alerts', { headers });
       if (res.ok) {
         const data = await res.json();
         setAlerts(data.alerts || []);
       }
     } catch (e) {
-      console.error('Failed to fetch alerts:', e);
+      console.warn('Alerts fetch deferred (reconnecting):', e instanceof Error ? e.message : e);
     }
-  }, [user, getAuthHeader]);
+  }, [user?.uid, getAuthHeader]);
 
   // Fetch user orders
   const refreshOrders = useCallback(async () => {
-    if (!user) return;
+    if (!user?.uid) return;
     try {
       const headers = await getAuthHeader();
-      const res = await fetch('/api/orders', { headers });
+      const res = await fetchWithRetry('/api/orders', { headers });
       if (res.ok) {
         const data = await res.json();
         setOrders(data.trades || []);
       }
     } catch (e) {
-      console.error('Failed to fetch orders:', e);
+      console.warn('Orders fetch deferred (reconnecting):', e instanceof Error ? e.message : e);
     }
-  }, [user, getAuthHeader]);
+  }, [user?.uid, getAuthHeader]);
 
   // Fetch watchlist
   const fetchWatchlist = useCallback(async () => {
-    if (!user) return;
+    if (!user?.uid) return;
     try {
       const headers = await getAuthHeader();
-      const res = await fetch('/api/watchlist', { headers });
+      const res = await fetchWithRetry('/api/watchlist', { headers });
       if (res.ok) {
         const data = await res.json();
         if (data.watchlist && data.watchlist.length > 0) {
@@ -196,17 +211,17 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }
     } catch (e) {
-      console.warn('Watchlist fetch error:', e);
+      console.warn('Watchlist fetch notice:', e instanceof Error ? e.message : e);
     }
-  }, [user, getAuthHeader]);
+  }, [user?.uid, getAuthHeader]);
 
   useEffect(() => {
-    if (user) {
+    if (!authLoading && user?.uid) {
       refreshOrders();
       fetchWatchlist();
       fetchAlerts();
     }
-  }, [user, refreshOrders, fetchWatchlist, fetchAlerts]);
+  }, [authLoading, user?.uid, refreshOrders, fetchWatchlist, fetchAlerts]);
 
   // REAL-TIME PRICE ALERT MONITORING ENGINE
   useEffect(() => {
@@ -261,12 +276,12 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Persist to Cloud SQL backend
         try {
           const headers = await getAuthHeader();
-          await fetch(`/api/alerts/${alert.id}/trigger`, {
+          await fetchWithRetry(`/api/alerts/${alert.id}/trigger`, {
             method: 'POST',
             headers,
           });
         } catch (err) {
-          console.error('Failed to mark alert triggered in backend:', err);
+          console.warn('Alert trigger sync notice:', err instanceof Error ? err.message : err);
         }
       }
     });

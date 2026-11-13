@@ -9,13 +9,17 @@ import {
   Lock,
   LogOut,
   Sparkles,
+  Coins,
+  Check,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
+import { CORETOKEN_SPEC, addCoreTokenToMetaMask } from '../config/coreTokenContract.ts';
+import { ReownWalletConnectCard } from '../components/ReownWalletConnectCard.tsx';
 
 export const ProfilePage: React.FC = () => {
   const { user, firebaseUser, web3Account, logout, connectWeb3Wallet, linkWeb3Wallet } = useAuth();
-  const { setAuthModalOpen, addToast } = useTrading();
+  const { setAuthModalOpen, addToast, setActivePage } = useTrading();
   const [copied, setCopied] = useState<boolean>(false);
   const [linking, setLinking] = useState<boolean>(false);
 
@@ -154,6 +158,49 @@ export const ProfilePage: React.FC = () => {
                 </button>
               </div>
             )}
+            <div className="mt-5 pt-4 border-t border-[#1A2234] font-mono text-xs space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-[#0D121D] rounded-xl border border-[#D4AF37]/30">
+                <div className="min-w-0">
+                  <span className="text-[10px] text-gray-400 uppercase block">
+                    CoreToken (CT) ERC-20 Contract (Sepolia)
+                  </span>
+                  <span className="text-[#D4AF37] font-bold break-all">
+                    {CORETOKEN_SPEC.contractAddress}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => copyAddress(CORETOKEN_SPEC.contractAddress)}
+                    className="p-2 bg-[#141C2C] hover:bg-[#1E283D] rounded-lg text-gray-300 hover:text-[#D4AF37]"
+                    title="Copy CoreToken Contract Address"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await addCoreTokenToMetaMask();
+                        addToast(res.added ? 'success' : 'info', 'MetaMask Asset Watch', res.message);
+                      } catch (err: any) {
+                        addToast('error', 'MetaMask Import Error', err?.message || 'Could not prompt MetaMask.');
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-[#D4AF37] hover:bg-[#E6BE44] text-black font-bold rounded-lg flex items-center gap-1"
+                  >
+                    <Coins className="w-3.5 h-3.5" />
+                    <span>Watch CT</span>
+                  </button>
+                  <button
+                    onClick={() => setActivePage('token')}
+                    className="px-3 py-1.5 bg-[#141C2C] hover:bg-[#1E283D] border border-[#1A2234] text-sky-400 rounded-lg"
+                  >
+                    CT Explorer
+                  </button>
+                </div>
+              </div>
+
+              <ReownWalletConnectCard variant="compact" />
+            </div>
           </div>
 
           {/* Security & Cloud SQL Integration Details */}

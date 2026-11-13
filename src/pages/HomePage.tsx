@@ -12,15 +12,41 @@ import {
   RefreshCw,
   Coins,
   Gem,
+  Copy,
+  Check,
+  ExternalLink,
+  FileCode2,
 } from 'lucide-react';
 import { useTrading } from '../context/TradingContext.tsx';
 import { useAuth } from '../context/AuthContext.tsx';
 import { MarketNewsFeed } from '../components/MarketNewsFeed.tsx';
 import { MarketSentimentWidget } from '../components/MarketSentimentWidget.tsx';
+import {
+  CORETOKEN_SPEC,
+  addCoreTokenToMetaMask,
+  formatShortAddress,
+} from '../config/coreTokenContract.ts';
 
 export const HomePage: React.FC = () => {
-  const { markets, setActiveSymbol, setActivePage, setAuthModalOpen } = useTrading();
+  const { markets, setActiveSymbol, setActivePage, setAuthModalOpen, addToast } = useTrading();
   const { user } = useAuth();
+  const [copiedContract, setCopiedContract] = React.useState(false);
+
+  const handleCopyContract = () => {
+    navigator.clipboard.writeText(CORETOKEN_SPEC.contractAddress);
+    setCopiedContract(true);
+    addToast('info', 'Contract Address Copied', CORETOKEN_SPEC.contractAddress);
+    setTimeout(() => setCopiedContract(false), 2000);
+  };
+
+  const handleAddCtToMetaMask = async () => {
+    try {
+      const res = await addCoreTokenToMetaMask();
+      addToast(res.added ? 'success' : 'info', 'MetaMask Asset Watch', res.message);
+    } catch (err: any) {
+      addToast('error', 'MetaMask Import Error', err?.message || 'Could not import CoreToken in MetaMask.');
+    }
+  };
 
   const handleTradePair = (symbol: string) => {
     setActiveSymbol(symbol);
@@ -227,18 +253,26 @@ export const HomePage: React.FC = () => {
 
               <div className="pt-2 flex flex-wrap gap-3">
                 <button
-                  onClick={() => setActivePage('rewards')}
-                  className="px-6 py-3 bg-[#D4AF37] hover:bg-[#E6BE44] text-black font-bold text-xs rounded-xl shadow-lg shadow-[#D4AF37]/20 flex items-center gap-2 transition-all"
+                  onClick={() => setActivePage('token')}
+                  className="px-6 py-3 bg-[#D4AF37] hover:bg-[#E6BE44] text-black font-bold text-xs rounded-xl shadow-lg shadow-[#D4AF37]/20 flex items-center gap-2 transition-all font-mono"
                 >
-                  <span>Go to CT Rewards Center</span>
+                  <FileCode2 className="w-4 h-4" />
+                  <span>CT Contract & MetaMask</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
                 <button
+                  onClick={() => setActivePage('rewards')}
+                  className="px-5 py-3 bg-[#111726] hover:bg-[#1A2338] text-white border border-[#D4AF37]/40 font-bold text-xs rounded-xl shadow-lg flex items-center gap-2 transition-all font-mono"
+                >
+                  <Coins className="w-4 h-4 text-[#D4AF37]" />
+                  <span>CT Rewards Center</span>
+                </button>
+                <button
                   onClick={() => setActivePage('nfts')}
-                  className="px-6 py-3 bg-[#111726] hover:bg-[#1A2338] text-white border border-[#D4AF37]/50 font-bold text-xs rounded-xl shadow-lg flex items-center gap-2 transition-all font-mono"
+                  className="px-5 py-3 bg-[#111726] hover:bg-[#1A2338] text-white border border-[#1A2234] hover:border-[#D4AF37]/40 font-bold text-xs rounded-xl shadow-lg flex items-center gap-2 transition-all font-mono"
                 >
                   <Gem className="w-4 h-4 text-[#D4AF37]" />
-                  <span>Explore NFT Relics & Download</span>
+                  <span>NFT Relics</span>
                 </button>
               </div>
 
@@ -265,7 +299,7 @@ export const HomePage: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="my-6 p-4 bg-[#07090E]/80 backdrop-blur-sm rounded-xl border border-[#1A2234] font-mono text-xs space-y-2">
+                <div className="my-5 p-4 bg-[#07090E]/85 backdrop-blur-sm rounded-xl border border-[#1A2234] font-mono text-xs space-y-2.5">
                   <div className="flex justify-between">
                     <span className="text-gray-400">Total Supply:</span>
                     <span className="text-white font-bold">100,000,000 CT</span>
@@ -274,14 +308,44 @@ export const HomePage: React.FC = () => {
                     <span className="text-gray-400">Circulating (Demo):</span>
                     <span className="text-[#D4AF37] font-bold">18,450,000 CT</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Smart Contract:</span>
-                    <span className="text-gray-400 truncate max-w-[180px]">0x71a...CoreToken</span>
+                  <div className="pt-1 border-t border-[#1A2234]/80 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Sepolia Contract:</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[#D4AF37] font-bold" title={CORETOKEN_SPEC.contractAddress}>
+                          {formatShortAddress(CORETOKEN_SPEC.contractAddress, 8, 6)}
+                        </span>
+                        <button
+                          onClick={handleCopyContract}
+                          className="p-1 bg-[#141C2C] hover:bg-[#1E283D] rounded text-gray-300 hover:text-[#D4AF37] transition-colors"
+                          title="Copy Full Contract Address"
+                        >
+                          {copiedContract ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        </button>
+                        <a
+                          href={`${CORETOKEN_SPEC.chain.explorerUrl}/token/${CORETOKEN_SPEC.contractAddress}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1 bg-[#141C2C] hover:bg-[#1E283D] rounded text-sky-400 transition-colors"
+                          title="Inspect on Sepolia Etherscan"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
+                    <div className="text-[10px] text-gray-400 break-all select-all bg-[#0B101A] px-2 py-1 rounded border border-[#1A2234]">
+                      {CORETOKEN_SPEC.contractAddress}
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-xs font-mono text-gray-400 pt-2 border-t border-[#1A2234]">
-                  <span>EtherPulse Protocol</span>
+                <div className="flex items-center justify-between gap-2 text-xs font-mono text-gray-400 pt-2 border-t border-[#1A2234]">
+                  <button
+                    onClick={handleAddCtToMetaMask}
+                    className="px-3 py-1.5 bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 border border-[#D4AF37]/40 text-[#D4AF37] rounded-lg font-bold transition-colors"
+                  >
+                    + Add CT to MetaMask
+                  </button>
                   <span className="text-emerald-400 flex items-center gap-1">
                     <span className="w-2 h-2 rounded-full bg-emerald-400" />
                     ERC-20 Staged

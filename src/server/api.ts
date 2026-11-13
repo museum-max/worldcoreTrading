@@ -1,4 +1,5 @@
 import express from 'express';
+import { Type } from '@google/genai';
 import { requireAuth, AuthRequest } from '../middleware/auth.ts';
 import {
   getOrCreateUser,
@@ -22,10 +23,11 @@ import {
   markAlertTriggered,
   resetPriceAlert,
 } from '../db/users.ts';
-import { ai } from './gemini.ts';
+import { getGeminiClient } from './gemini.ts';
 import { getFallbackNews } from './newsFallback.ts';
 import { getFallbackSentiment } from '../data/fallbackSentiment.ts';
 import { NFT_CATALOG } from '../data/nftCatalog.ts';
+import { CORETOKEN_SPEC, CORETOKEN_ERC20_ABI, REOWN_WALLETCONNECT_PAY } from '../config/coreTokenContract.ts';
 
 export const apiRouter = express.Router();
 apiRouter.use(express.json());
@@ -313,6 +315,58 @@ apiRouter.post('/user/reset-balance', requireAuth, async (req: AuthRequest, res)
   } catch (error: any) {
     console.error('Error resetting balance:', error);
     res.status(500).json({ error: error.message || 'Failed to reset balance' });
+  }
+});
+
+// CoreToken (CT) ERC-20 Smart Contract & Market Spec
+apiRouter.get('/token/coretoken', (_req, res) => {
+  const ctMarket = INITIAL_MARKETS['CT/USDT'];
+  res.json({
+    ...CORETOKEN_SPEC,
+    walletConnectReown: REOWN_WALLETCONNECT_PAY,
+    abiSummary: CORETOKEN_ERC20_ABI.map((item) => ({
+      name: item.name,
+      type: item.type,
+      stateMutability: 'stateMutability' in item ? item.stateMutability : undefined,
+    })),
+    market: ctMarket,
+  });
+});
+
+// Deposit Simulated Paper USD
+apiRouter.post('/user/deposit-demo', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const rawAmount = parseFloat(req.body?.amount);
+    if (isNaN(rawAmount) || rawAmount < 100 || rawAmount > 1000000) {
+      return res.status(400).json({ error: 'Deposit amount must be between $100 and $1,000,000 simulated USD.' });
+    }
+
+    let user = await getUser(uid);
+    if (!user) {
+      user = await getOrCreateUser(
+        uid,
+        req.user?.email,
+        req.user?.name,
+        req.user?.picture,
+        req.user?.walletAddress
+      );
+    }
+
+    const currentUsd = parseFloat(user.demoUsdBalance || '0');
+    const newUsd = (currentUsd + rawAmount).toFixed(2);
+    const updated = await updateUserBalances(uid, { demoUsdBalance: newUsd });
+
+    await addAdminLog(
+      uid,
+      'DEMO_DEPOSIT',
+      `User ${uid} credited +$${rawAmount.toLocaleString()} simulated USD (New balance: $${parseFloat(newUsd).toLocaleString()}).`
+    );
+
+    res.json({ success: true, user: updated });
+  } catch (error: any) {
+    console.error('Error crediting demo funds:', error);
+    res.status(500).json({ error: error.message || 'Failed to credit simulated USD funds' });
   }
 });
 
@@ -803,8 +857,13 @@ Return strictly a valid JSON array of objects without Markdown formatting or cod
   }
 ]`;
 
+    const ai = getGeminiClient();
+    if (!ai) {
+      throw new Error('Gemini API key not configured');
+    }
+
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
@@ -824,24 +883,22 @@ Return strictly a valid JSON array of objects without Markdown formatting or cod
       }));
 
     let articles: any[] = [];
-    try {
-      const cleanJson = rawText
-        .replace(/```json/gi, '')
-        .replace(/```/g, '')
-        .trim();
-      const firstBracket = cleanJson.indexOf('[');
-      const lastBracket = cleanJson.lastIndexOf(']');
-      if (firstBracket !== -1 && lastBracket !== -1) {
+    const cleanJson = rawText
+      .replace(/```json/gi, '')
+      .replace(/```/g, '')
+      .trim();
+    const firstBracket = cleanJson.indexOf('[');
+    const lastBracket = cleanJson.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      try {
         articles = JSON.parse(cleanJson.substring(firstBracket, lastBracket + 1));
-      } else {
-        articles = JSON.parse(cleanJson);
+      } catch {
+        articles = [];
       }
-    } catch (parseErr) {
-      console.warn('Could not parse Gemini JSON directly, applying structured fallback:', parseErr);
     }
 
     if (!Array.isArray(articles) || articles.length === 0) {
-      throw new Error('Unable to extract structured articles from search grounding output');
+      throw new Error('Structured news stream unavailable from grounding output; using fallback');
     }
 
     // Attach URLs from grounding sources to articles if available
@@ -923,124 +980,124 @@ apiRouter.get('/market-sentiment', async (req, res) => {
   }
 
   try {
-    const prompt = `You are the Chief Quantitative Strategist and Behavioral Economist for WORLCORE TRADE & EtherPulse.
-Analyze the current macroeconomic and cryptocurrency market sentiment using recent market trends, price action, ETF inflows, on-chain dynamics, and trading volume.
-Generate a comprehensive Fear & Greed sentiment index and asset-by-asset breakdown.
+    const marketSnapshot = ['BTC/USDT', 'ETH/USDT', 'CT/USDT', 'SOL/USDT', 'NVDA/USD']
+      .map((sym) => {
+        const m = INITIAL_MARKETS[sym];
+        return `${m.symbol} (${m.name}): price=$${m.price}, change24h=${m.change24h >= 0 ? '+' : ''}${m.change24h}%, high24h=$${m.high24h}, low24h=$${m.low24h}, volume24h=$${m.volume24h.toLocaleString()}`;
+      })
+      .join('\n');
 
-Assets to analyze:
-- BTC/USDT (Bitcoin): Institutional ETF adoption, macro hedge, digital gold.
-- ETH/USDT (Ethereum): Layer 1 settlement, staking yield, DeFi liquidity, spot ETF flows.
-- CT/USDT (CoreToken): Flagship utility token of EtherPulse/WorldCore, ERC-20 staking, fee rebate tokenomics, Sovereign Relic NFT utility.
-- SOL/USDT (Solana): High-throughput retail & DeFi volume, DEX velocity.
-- NVDA/USD (NVIDIA Corp): AI semiconductor bellwether, tech market driver.
+    const recentHeadlines = (newsCache['all']?.data?.articles || getFallbackNews('all'))
+      .slice(0, 5)
+      .map((a: any) => `- [${a.sentiment?.toUpperCase() || 'NEUTRAL'}] ${a.title}`)
+      .join('\n');
 
-Return strictly a valid JSON object without Markdown formatting or code fences:
-{
-  "overallScore": 74,
-  "classification": "Greed",
-  "previousScore": 68,
-  "lastWeekScore": 62,
-  "lastMonthScore": 54,
-  "marketPhase": "Bullish Accumulation & Utility Expansion",
-  "summary": "Institutional inflows into spot Bitcoin and Ethereum funds remain robust, with risk-on positioning expanding into ecosystem utility tokens like CoreToken (CT). Low leverage liquidations indicate organic spot-driven demand.",
-  "dominantDriver": "Institutional Spot Inflows & CoreToken Staking Lockups",
-  "factors": [
-    { "name": "Institutional Flow", "score": 84, "weight": "25%", "trend": "Accelerating", "description": "Sustained net inflows into Bitcoin and Ethereum spot funds exceeding $840M weekly." },
-    { "name": "Market Momentum & Volume", "score": 76, "weight": "25%", "trend": "Strong", "description": "Spot trading turnover comfortably outpacing short-term derivative liquidations." },
-    { "name": "DeFi & Utility Staking", "score": 82, "weight": "20%", "trend": "Bullish", "description": "High CoreToken (CT) staking lockups and Sovereign Relic NFT engagement reducing float." },
-    { "name": "Volatility Regime (VIX / DVOL)", "score": 66, "weight": "15%", "trend": "Stable", "description": "Controlled implied volatility providing stable runway for steady capital allocation." },
-    { "name": "Social & Retail Sentiment", "score": 72, "weight": "15%", "trend": "Positive", "description": "Growing trader confidence anchored by actual platform utilities rather than speculative mania." }
-  ],
-  "assetSentiments": [
-    {
-      "symbol": "BTC/USDT",
-      "name": "Bitcoin",
-      "score": 78,
-      "sentiment": "Greed",
-      "signal": "BULLISH",
-      "catalyst": "Institutional spot ETF accumulation and positive multi-quarter macro tailwinds.",
-      "supportLevel": "$88,500",
-      "resistanceLevel": "$94,200",
-      "momentum": "Strong Up"
-    },
-    {
-      "symbol": "ETH/USDT",
-      "name": "Ethereum",
-      "score": 71,
-      "sentiment": "Greed",
-      "signal": "BULLISH",
-      "catalyst": "Layer-2 ecosystem transaction records and expanding enterprise staking adoption.",
-      "supportLevel": "$3,240",
-      "resistanceLevel": "$3,650",
-      "momentum": "Up"
-    },
-    {
-      "symbol": "CT/USDT",
-      "name": "CoreToken",
-      "score": 86,
-      "sentiment": "Extreme Greed",
-      "signal": "VERY BULLISH",
-      "catalyst": "High yield staking participation, NFT Vault Sovereign Relic utility, and trading fee rebate lockups.",
-      "supportLevel": "$1.65",
-      "resistanceLevel": "$2.20",
-      "momentum": "Strong Up"
-    },
-    {
-      "symbol": "SOL/USDT",
-      "name": "Solana",
-      "score": 74,
-      "sentiment": "Greed",
-      "signal": "BULLISH",
-      "catalyst": "High decentralized exchange turnover and persistent active wallet growth.",
-      "supportLevel": "$185.00",
-      "resistanceLevel": "$215.00",
-      "momentum": "Up"
-    },
-    {
-      "symbol": "NVDA/USD",
-      "name": "NVIDIA Corp",
-      "score": 69,
-      "sentiment": "Greed",
-      "signal": "BULLISH",
-      "catalyst": "Record high data center semiconductor demand and Blackwell architecture deployments.",
-      "supportLevel": "$138.00",
-      "resistanceLevel": "$148.50",
-      "momentum": "Moderate Up"
+    const prompt = `Analyze the following platform market snapshot and recent institutional news headlines for WORLCORE TRADE & EtherPulse and compute a quantitative Fear & Greed sentiment breakdown.
+
+MARKET SNAPSHOT:
+${marketSnapshot}
+
+RECENT HEADLINES:
+${recentHeadlines}
+
+Generate scores (0-100) and concise catalysts for BTC/USDT, ETH/USDT, CT/USDT (CoreToken), SOL/USDT, and NVDA/USD.`;
+
+    const ai = getGeminiClient();
+    if (!ai) {
+      throw new Error('Gemini API key not configured');
     }
-  ],
-  "keyInsights": [
-    "Risk-on sentiment is supported by real liquidity inflows rather than excessive speculative leverage.",
-    "CoreToken (CT) demonstrates high relative strength within the platform ecosystem.",
-    "Support levels across major crypto assets remain well-defended on paper trading testnets."
-  ]
-}`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
+      config: {
+        systemInstruction:
+          'You are the Chief Quantitative Strategist for WORLCORE TRADE. Always score and analyze the market snapshot provided in the prompt and output strictly JSON matching the schema.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            overallScore: { type: Type.NUMBER },
+            classification: { type: Type.STRING },
+            previousScore: { type: Type.NUMBER },
+            lastWeekScore: { type: Type.NUMBER },
+            lastMonthScore: { type: Type.NUMBER },
+            marketPhase: { type: Type.STRING },
+            summary: { type: Type.STRING },
+            dominantDriver: { type: Type.STRING },
+            factors: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  score: { type: Type.NUMBER },
+                  weight: { type: Type.STRING },
+                  trend: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                },
+                required: ['name', 'score', 'weight', 'trend', 'description'],
+              },
+            },
+            assetSentiments: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  symbol: { type: Type.STRING },
+                  name: { type: Type.STRING },
+                  score: { type: Type.NUMBER },
+                  sentiment: { type: Type.STRING },
+                  signal: { type: Type.STRING },
+                  catalyst: { type: Type.STRING },
+                  supportLevel: { type: Type.STRING },
+                  resistanceLevel: { type: Type.STRING },
+                  momentum: { type: Type.STRING },
+                },
+                required: ['symbol', 'name', 'score', 'sentiment', 'signal', 'catalyst', 'supportLevel', 'resistanceLevel', 'momentum'],
+              },
+            },
+            keyInsights: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+          },
+          required: [
+            'overallScore',
+            'classification',
+            'previousScore',
+            'lastWeekScore',
+            'lastMonthScore',
+            'marketPhase',
+            'summary',
+            'dominantDriver',
+            'factors',
+            'assetSentiments',
+            'keyInsights',
+          ],
+        },
+      },
     });
 
-    const rawText = response.text || '';
+    const rawText = (response.text || '').trim();
     let parsedData: any = null;
 
-    try {
-      const cleanJson = rawText
-        .replace(/```json/gi, '')
-        .replace(/```/g, '')
-        .trim();
-      const firstBrace = cleanJson.indexOf('{');
-      const lastBrace = cleanJson.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace !== -1) {
+    const cleanJson = rawText
+      .replace(/```json/gi, '')
+      .replace(/```/g, '')
+      .trim();
+    const firstBrace = cleanJson.indexOf('{');
+    const lastBrace = cleanJson.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      try {
         parsedData = JSON.parse(cleanJson.substring(firstBrace, lastBrace + 1));
-      } else {
-        parsedData = JSON.parse(cleanJson);
+      } catch {
+        parsedData = null;
       }
-    } catch (parseErr) {
-      console.warn('Could not parse Gemini sentiment JSON directly:', parseErr);
     }
 
     if (!parsedData || typeof parsedData.overallScore !== 'number') {
-      throw new Error('Invalid structure received from Gemini sentiment analysis');
+      throw new Error('Sentiment response did not match numeric score structure; using quantitative model fallback');
     }
 
     const payload = {

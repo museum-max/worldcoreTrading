@@ -62,7 +62,7 @@ export const MarketNewsFeed: React.FC = () => {
         }
       }
     } catch (err) {
-      console.error('Failed to fetch market news feed:', err);
+      console.warn('News feed fetch deferred (reconnecting):', err instanceof Error ? err.message : err);
     } finally {
       setLoading(false);
       setRefreshing(false);

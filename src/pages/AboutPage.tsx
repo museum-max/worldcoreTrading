@@ -1,6 +1,7 @@
 import React from 'react';
-import { ShieldCheck, Award, Zap, Coins, Database, Lock, ArrowRight } from 'lucide-react';
+import { ShieldCheck, Zap, Coins, Database, ArrowRight } from 'lucide-react';
 import { useTrading } from '../context/TradingContext.tsx';
+import { CORETOKEN_SPEC } from '../config/coreTokenContract.ts';
 
 export const AboutPage: React.FC = () => {
   const { setActivePage } = useTrading();
@@ -9,8 +10,12 @@ export const AboutPage: React.FC = () => {
     <div className="min-h-screen bg-[#07090E] text-white py-12 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto space-y-12">
       {/* Brand Hero */}
       <div className="text-center space-y-4">
-        <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-[#1F2739] via-[#0D121D] to-[#07090E] border-2 border-[#D4AF37] flex items-center justify-center shadow-xl shadow-[#D4AF37]/20">
-          <span className="font-brand text-3xl font-black text-[#D4AF37]">W</span>
+        <div className="w-20 h-20 mx-auto rounded-2xl overflow-hidden bg-black border-2 border-[#D4AF37] flex items-center justify-center shadow-xl shadow-[#D4AF37]/25">
+          <img
+            src={CORETOKEN_SPEC.logoPath}
+            alt="WorldCore Logo"
+            className="w-full h-full object-cover scale-110"
+          />
         </div>
         <h1 className="font-brand text-4xl sm:text-5xl font-black text-white tracking-wide">
           WORLCORE <span className="gold-gradient-text">TRADE</span>
@@ -71,7 +76,7 @@ export const AboutPage: React.FC = () => {
             <strong>2. ZERO KEY EXPOSURE:</strong> Private keys, mnemonic seed phrases, and live brokerage credentials are never requested, transmitted, or stored. Authentication relies strictly on Google Firebase OAuth and Web3 signature verification (EIP-191).
           </p>
           <p>
-            <strong>3. TESTNET ERC-20 COMPLIANCE:</strong> CoreToken (CT) tokens and demo balances are simulated ecosystem credits designed for testing utility token dynamics prior to Ethereum Sepolia testnet deployment.
+            <strong>3. TESTNET ERC-20 COMPLIANCE:</strong> CoreToken (CT) is specified by an OpenZeppelin v5 ERC-20 smart contract staged for Ethereum Sepolia Testnet (Chain 11155111) at <span className="text-[#D4AF37] break-all">{CORETOKEN_SPEC.contractAddress}</span>. Platform demo balances represent educational ecosystem credits with real token deployment disabled.
           </p>
         </div>
 
@@ -80,13 +85,21 @@ export const AboutPage: React.FC = () => {
             System Status: 100% Operational • Cloud SQL Online
           </span>
 
-          <button
-            onClick={() => setActivePage('terminal')}
-            className="px-6 py-2.5 bg-gradient-to-r from-[#D4AF37] to-[#F59E0B] text-black font-bold text-xs rounded-xl shadow-lg shadow-[#D4AF37]/20 flex items-center gap-2 hover:from-[#E6BE44] hover:to-[#FBBF24] transition-all font-mono"
-          >
-            <span>Open Terminal</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setActivePage('token')}
+              className="px-5 py-2.5 bg-[#121A2A] hover:bg-[#1B263E] border border-[#D4AF37]/40 text-[#D4AF37] font-bold text-xs rounded-xl transition-all font-mono"
+            >
+              Inspect CT Contract
+            </button>
+            <button
+              onClick={() => setActivePage('terminal')}
+              className="px-6 py-2.5 bg-gradient-to-r from-[#D4AF37] to-[#F59E0B] text-black font-bold text-xs rounded-xl shadow-lg shadow-[#D4AF37]/20 flex items-center gap-2 hover:from-[#E6BE44] hover:to-[#FBBF24] transition-all font-mono"
+            >
+              <span>Open Terminal</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
     </div>

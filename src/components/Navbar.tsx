@@ -33,7 +33,8 @@ export const Navbar: React.FC = () => {
     { id: 'markets', label: 'Markets', icon: <TrendingUp className="w-4 h-4" /> },
     { id: 'alerts', label: 'Alerts', icon: <Bell className="w-4 h-4 text-[#D4AF37]" />, badge: unreadAlertsCount > 0 ? `${unreadAlertsCount}` : undefined },
     { id: 'portfolio', label: 'Portfolio', icon: <Wallet className="w-4 h-4" /> },
-    { id: 'rewards', label: 'CT Rewards', icon: <Coins className="w-4 h-4 text-[#D4AF37]" />, badge: 'HOT' },
+    { id: 'token', label: 'CT Token', icon: <Coins className="w-4 h-4 text-[#D4AF37]" />, badge: 'ERC-20' },
+    { id: 'rewards', label: 'CT Rewards', icon: <Sparkles className="w-4 h-4 text-[#D4AF37]" /> },
     { id: 'nfts', label: 'NFT Vault', icon: <Gem className="w-4 h-4 text-[#D4AF37]" />, badge: 'NEW' },
     { id: 'watchlist', label: 'Watchlist', icon: <Star className="w-4 h-4" /> },
     { id: 'history', label: 'History', icon: <Clock className="w-4 h-4" /> },
@@ -140,10 +141,10 @@ export const Navbar: React.FC = () => {
 
         {/* Right Action Area */}
         <div className="flex items-center gap-3">
-          {/* CoreToken (CT) Demo Pill */}
+          {/* CoreToken (CT) Wallet & Smart Contract Pill */}
           <button
-            onClick={() => handleNav('rewards')}
-            title="CoreToken (CT) Rewards Center"
+            onClick={() => handleNav('token')}
+            title="CoreToken (CT) Wallet & ERC-20 Smart Contract"
             className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-[#182030] to-[#0E1422] border border-[#D4AF37]/40 rounded-lg hover:border-[#D4AF37] transition-all group"
           >
             <div className="w-6 h-6 rounded-full overflow-hidden border border-[#D4AF37]/60 shadow-sm shadow-[#D4AF37]/30 flex items-center justify-center bg-black shrink-0">

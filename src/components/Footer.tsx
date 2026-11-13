@@ -1,6 +1,7 @@
 import React from 'react';
 import { ShieldCheck, Database, Award, ArrowUpRight } from 'lucide-react';
 import { useTrading } from '../context/TradingContext.tsx';
+import { CORETOKEN_SPEC } from '../config/coreTokenContract.ts';
 
 export const Footer: React.FC = () => {
   const { setActivePage } = useTrading();
@@ -12,8 +13,12 @@ export const Footer: React.FC = () => {
           {/* Brand Info */}
           <div className="md:col-span-2 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#1F2739] to-[#07090E] border border-[#D4AF37]/50 flex items-center justify-center">
-                <span className="font-brand text-sm font-bold text-[#D4AF37]">W</span>
+              <div className="w-9 h-9 rounded-lg overflow-hidden bg-black border border-[#D4AF37]/60 flex items-center justify-center shrink-0">
+                <img
+                  src={CORETOKEN_SPEC.logoPath}
+                  alt="WorldCore Logo"
+                  className="w-full h-full object-cover scale-110"
+                />
               </div>
               <span className="font-brand text-base font-bold text-white tracking-wider">
                 WORLCORE <span className="text-[#D4AF37]">TRADE</span>
@@ -53,8 +58,13 @@ export const Footer: React.FC = () => {
                 </button>
               </li>
               <li>
+                <button onClick={() => setActivePage('token')} className="hover:text-[#D4AF37] transition-colors flex items-center gap-1">
+                  CoreToken (CT) Contract <ArrowUpRight className="w-3 h-3 text-[#D4AF37]" />
+                </button>
+              </li>
+              <li>
                 <button onClick={() => setActivePage('rewards')} className="hover:text-[#D4AF37] transition-colors flex items-center gap-1">
-                  CoreToken (CT) Center <ArrowUpRight className="w-3 h-3 text-[#D4AF37]" />
+                  CT Rewards Center <ArrowUpRight className="w-3 h-3 text-[#D4AF37]" />
                 </button>
               </li>
               <li>
@@ -102,7 +112,7 @@ export const Footer: React.FC = () => {
         {/* Regulatory & Paper Trading Disclaimer */}
         <div className="pt-8 border-t border-[#161C2A] text-[11px] text-gray-400 space-y-2 font-mono">
           <p>
-            <strong>REGULATORY NOTICE & PAPER TRADING DISCLAIMER:</strong> WORLCORE TRADE is a simulated educational and portfolio modeling platform. It does not process, handle, or accept real fiat or cryptocurrency deposits. All market quotes and trade fills are simulated. CoreToken (CT) tokens displayed within this platform represent demo ecosystem credits.
+            <strong>REGULATORY NOTICE & PAPER TRADING DISCLAIMER:</strong> WORLCORE TRADE is a simulated educational and portfolio modeling platform. It does not process, handle, or accept real fiat or cryptocurrency deposits. All market quotes and trade fills are simulated. CoreToken (CT) Sepolia ERC-20 Contract ({CORETOKEN_SPEC.contractAddress}) is staged for testnet validation only; platform balances represent demo ecosystem credits.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-between text-gray-400 pt-2">
             <span>© {new Date().getFullYear()} WORLCORE TRADE. All rights reserved.</span>

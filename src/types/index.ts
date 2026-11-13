@@ -87,7 +87,8 @@ export type PageView =
   | 'settings'
   | 'about'
   | 'alerts'
-  | 'nfts';
+  | 'nfts'
+  | 'token';
 
 export interface NftItem {
   id: string;

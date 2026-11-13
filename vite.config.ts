@@ -23,7 +23,20 @@ export default defineConfig(() => {
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
+      },
+    },
+    build: {
+      chunkSizeWarningLimit: 900,
+      rolldownOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/firebase')) return 'vendor-firebase';
+            if (id.includes('node_modules/d3')) return 'vendor-d3';
+            if (id.includes('node_modules/lightweight-charts')) return 'vendor-charts';
+            if (id.includes('node_modules/lucide-react')) return 'vendor-icons';
+          },
+        },
       },
     },
     server: {

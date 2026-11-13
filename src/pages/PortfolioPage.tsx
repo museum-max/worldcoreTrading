@@ -10,15 +10,18 @@ import {
   Coins,
   DollarSign,
 } from 'lucide-react';
+import { doc, setDoc } from 'firebase/firestore';
+import { firestoreDb } from '../lib/firebase.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
 import { PortfolioGrowthChart } from '../components/PortfolioGrowthChart.tsx';
 
 export const PortfolioPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, firebaseUser, getAuthHeader, updateBalancesLocally } = useAuth();
   const { markets, orders, resetBalances, setActivePage, setActiveSymbol, addToast } = useTrading();
   const [depositModalOpen, setDepositModalOpen] = useState<boolean>(false);
   const [depositAmount, setDepositAmount] = useState<string>('50000');
+  const [depositing, setDepositing] = useState<boolean>(false);
 
   const usdBalance = parseFloat(user?.demoUsdBalance || '100000.00');
   const ctBalance = parseFloat(user?.demoCtBalance || '25000.00');
@@ -37,10 +40,44 @@ export const PortfolioPage: React.FC = () => {
   const handleSimulateDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
     const add = parseFloat(depositAmount);
-    if (isNaN(add) || add <= 0) return;
+    if (isNaN(add) || add < 100 || add > 1000000) {
+      addToast('error', 'Invalid Amount', 'Please enter a simulated amount between $100 and $1,000,000.');
+      return;
+    }
 
+    setDepositing(true);
     try {
-      // Optimistic balance addition
+      const headers = await getAuthHeader();
+      const res = await fetch('/api/user/deposit-demo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ amount: add }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to credit simulated USD');
+      }
+
+      if (data.user?.demoUsdBalance !== undefined) {
+        updateBalancesLocally({ demoUsdBalance: data.user.demoUsdBalance });
+
+        if (firebaseUser && user?.uid) {
+          try {
+            await setDoc(
+              doc(firestoreDb, 'users', user.uid),
+              {
+                demoUsdBalance: data.user.demoUsdBalance,
+                updatedAt: new Date().toISOString(),
+              },
+              { merge: true }
+            );
+          } catch (fsErr) {
+            console.warn('Firestore deposit sync notice:', fsErr);
+          }
+        }
+      }
+
       addToast(
         'success',
         'Demo Funds Credited',
@@ -48,7 +85,9 @@ export const PortfolioPage: React.FC = () => {
       );
       setDepositModalOpen(false);
     } catch (err: any) {
-      addToast('error', 'Deposit Failed', err.message);
+      addToast('error', 'Deposit Failed', err.message || 'Could not process simulated deposit');
+    } finally {
+      setDepositing(false);
     }
   };
 
@@ -404,9 +443,10 @@ export const PortfolioPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2 bg-[#D4AF37] text-black font-bold rounded-lg hover:bg-[#E6BE44]"
+                  disabled={depositing}
+                  className="flex-1 py-2 bg-[#D4AF37] text-black font-bold rounded-lg hover:bg-[#E6BE44] disabled:opacity-50"
                 >
-                  Credit Funds
+                  {depositing ? 'Crediting...' : 'Credit Funds'}
                 </button>
               </div>
             </form>

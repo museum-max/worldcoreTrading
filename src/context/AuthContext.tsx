@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -8,9 +8,24 @@ import {
   updateProfile,
   User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, googleAuthProvider, firestoreDb } from '../lib/firebase.ts';
 import { UserProfile } from '../types/index.ts';
+
+async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 2): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(url, options);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastErr;
+}
 
 interface Web3Account {
   address: string;
@@ -51,8 +66,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Helper to sync user profile across both Cloud SQL and Cloud Firestore in realtime
-  const syncAndFetchUser = async (
+  // Helper to sync user profile across Cloud SQL and (when Firebase-signed-in) Cloud Firestore
+  const syncAndFetchUser = useCallback(async (
     uid: string,
     email?: string,
     name?: string,
@@ -62,7 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ) => {
     try {
       // 1. Sync to Cloud SQL backend
-      const resSync = await fetch('/api/auth/sync', {
+      const resSync = await fetchWithRetry('/api/auth/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify({
@@ -74,44 +89,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }),
       });
 
+      let syncedUser: UserProfile | null = null;
       if (resSync.ok) {
         const syncData = await resSync.json();
         if (syncData.user) {
-          setUser(syncData.user);
+          syncedUser = syncData.user;
         }
       }
 
-      // 2. Realtime sync to Cloud Firestore
-      try {
-        const userDocRef = doc(firestoreDb, 'users', uid);
-        await setDoc(
-          userDocRef,
-          {
-            uid,
-            email: email || '',
-            displayName: name || (wallet ? `Trader ${wallet.slice(0, 6)}` : 'Institutional Trader'),
-            photoURL: photo || '',
-            walletAddress: wallet || '',
-            role: email === 'joaquineleonardo@gmail.com' ? 'admin' : 'user',
-            demoUsdBalance: user?.demoUsdBalance || '100000.00',
-            demoEthBalance: user?.demoEthBalance || '10.00',
-            demoCtBalance: user?.demoCtBalance || '25000.00',
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      } catch (firestoreErr) {
-        console.warn('Firestore user document sync notice:', firestoreErr);
-      }
-
-      // 3. Fetch fresh profile from backend
-      const res = await fetch('/api/user/profile', { headers });
+      // 2. Fetch fresh profile from backend to guarantee authoritative Cloud SQL balances
+      const res = await fetchWithRetry('/api/user/profile', { headers });
       if (res.ok) {
         const data = await res.json();
-        setUser(data.user);
+        if (data.user) {
+          syncedUser = data.user;
+        }
+      }
+
+      if (syncedUser) {
+        setUser(syncedUser);
+      }
+
+      // 3. Realtime sync to Cloud Firestore only when an authenticated Firebase user owns this document
+      if (auth.currentUser && auth.currentUser.uid === uid) {
+        try {
+          const userDocRef = doc(firestoreDb, 'users', uid);
+          await setDoc(
+            userDocRef,
+            {
+              uid,
+              email: syncedUser?.email || email || '',
+              displayName:
+                syncedUser?.displayName ||
+                name ||
+                (wallet ? `Trader ${wallet.slice(0, 6)}` : 'Institutional Trader'),
+              photoURL: syncedUser?.photoURL || photo || '',
+              walletAddress: syncedUser?.walletAddress || wallet || '',
+              role: syncedUser?.role || (email === 'joaquineleonardo@gmail.com' ? 'admin' : 'user'),
+              demoUsdBalance: syncedUser?.demoUsdBalance || '100000.00',
+              demoEthBalance: syncedUser?.demoEthBalance || '10.00',
+              demoCtBalance: syncedUser?.demoCtBalance || '25000.00',
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch (firestoreErr) {
+          console.warn('Firestore user document sync notice:', firestoreErr);
+        }
       }
     } catch (err) {
-      console.error('Failed to sync/fetch user:', err);
+      console.warn('Profile sync fallback active (network unavailable):', err instanceof Error ? err.message : err);
       // Fallback guest profile in memory if offline
       setUser((prev) => prev || {
         uid,
@@ -124,10 +151,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         demoCtBalance: '25000.00',
       });
     }
-  };
+  }, []);
 
-  // Build authorization header
-  const getAuthHeader = async (): Promise<Record<string, string>> => {
+  // Build authorization header (memoized so dependent effects stay stable)
+  const getAuthHeader = useCallback(async (): Promise<Record<string, string>> => {
     if (firebaseUser) {
       try {
         const token = await firebaseUser.getIdToken();
@@ -141,7 +168,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     // Default fallback demo session
     return { Authorization: `Web3 0x000000000000000000000000000000000000demo:demo` };
-  };
+  }, [firebaseUser, web3Account]);
 
   // Listen to Firebase Auth state
   useEffect(() => {
@@ -174,13 +201,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, [web3Account]);
 
-  // Real-time Firestore Document Listener for the active user
+  // Real-time Firestore Document Listener only for authenticated Firebase user
   useEffect(() => {
-    const activeUid = firebaseUser?.uid || (web3Account ? `web3_${web3Account.address.toLowerCase()}` : null);
-    if (!activeUid || activeUid === 'demo_trader_genesis') return;
+    if (!firebaseUser?.uid) return;
 
     try {
-      const userRef = doc(firestoreDb, 'users', activeUid);
+      const userRef = doc(firestoreDb, 'users', firebaseUser.uid);
       const unsubFirestore = onSnapshot(
         userRef,
         (snap) => {
@@ -204,7 +230,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (e) {
       console.warn('Could not attach Firestore onSnapshot listener:', e);
     }
-  }, [firebaseUser, web3Account]);
+  }, [firebaseUser]);
 
   // 1. Login or Register with Google (Gmail) Popup in Realtime
   const loginWithGoogle = async () => {
@@ -413,21 +439,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const refreshProfile = async () => {
+  const refreshProfile = useCallback(async () => {
     if (!user) return;
     try {
       const headers = await getAuthHeader();
-      const res = await fetch('/api/user/profile', { headers });
+      const res = await fetchWithRetry('/api/user/profile', { headers });
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
       }
     } catch (e) {
-      console.error('Failed to refresh profile:', e);
+      console.warn('Profile refresh deferred:', e instanceof Error ? e.message : e);
     }
-  };
+  }, [user, getAuthHeader]);
 
-  const updateBalancesLocally = (balances: { demoUsdBalance?: string; demoEthBalance?: string; demoCtBalance?: string }) => {
+  const updateBalancesLocally = useCallback((balances: { demoUsdBalance?: string; demoEthBalance?: string; demoCtBalance?: string }) => {
     setUser((prev) => {
       if (!prev) return null;
       return {
@@ -437,7 +463,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         demoCtBalance: balances.demoCtBalance !== undefined ? balances.demoCtBalance : prev.demoCtBalance,
       };
     });
-  };
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -457,7 +483,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updateBalancesLocally,
       getAuthHeader,
     }),
-    [user, firebaseUser, web3Account, loading]
+    [user, firebaseUser, web3Account, loading, refreshProfile, updateBalancesLocally, getAuthHeader]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
