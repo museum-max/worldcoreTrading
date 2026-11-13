@@ -16,6 +16,7 @@ import {
 import { useTrading } from '../context/TradingContext.tsx';
 import { useAuth } from '../context/AuthContext.tsx';
 import { MarketNewsFeed } from '../components/MarketNewsFeed.tsx';
+import { MarketSentimentWidget } from '../components/MarketSentimentWidget.tsx';
 
 export const HomePage: React.FC = () => {
   const { markets, setActiveSymbol, setActivePage, setAuthModalOpen } = useTrading();
@@ -183,6 +184,9 @@ export const HomePage: React.FC = () => {
           ))}
         </div>
       </section>
+
+      {/* Real-Time Market Sentiment & Fear / Greed Engine (Gemini AI) */}
+      <MarketSentimentWidget />
 
       {/* CoreToken (CT) Ecosystem Spotlight */}
       <section className="py-12 bg-[#090D14] border-y border-[#1A2234] relative overflow-hidden">

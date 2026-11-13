@@ -24,6 +24,7 @@ import {
 } from '../db/users.ts';
 import { ai } from './gemini.ts';
 import { getFallbackNews } from './newsFallback.ts';
+import { getFallbackSentiment } from '../data/fallbackSentiment.ts';
 import { NFT_CATALOG } from '../data/nftCatalog.ts';
 
 export const apiRouter = express.Router();
@@ -909,5 +910,182 @@ Return strictly a valid JSON array of objects without Markdown formatting or cod
     res.json(fallbackPayload);
   }
 });
+
+// In-memory cache for market sentiment (4 minute TTL)
+let sentimentCache: { timestamp: number; data: any } | null = null;
+const SENTIMENT_CACHE_TTL_MS = 4 * 60 * 1000;
+
+apiRouter.get('/market-sentiment', async (req, res) => {
+  const forceRefresh = req.query.refresh === 'true';
+
+  if (!forceRefresh && sentimentCache && Date.now() - sentimentCache.timestamp < SENTIMENT_CACHE_TTL_MS) {
+    return res.json({ ...sentimentCache.data, cached: true });
+  }
+
+  try {
+    const prompt = `You are the Chief Quantitative Strategist and Behavioral Economist for WORLCORE TRADE & EtherPulse.
+Analyze the current macroeconomic and cryptocurrency market sentiment using recent market trends, price action, ETF inflows, on-chain dynamics, and trading volume.
+Generate a comprehensive Fear & Greed sentiment index and asset-by-asset breakdown.
+
+Assets to analyze:
+- BTC/USDT (Bitcoin): Institutional ETF adoption, macro hedge, digital gold.
+- ETH/USDT (Ethereum): Layer 1 settlement, staking yield, DeFi liquidity, spot ETF flows.
+- CT/USDT (CoreToken): Flagship utility token of EtherPulse/WorldCore, ERC-20 staking, fee rebate tokenomics, Sovereign Relic NFT utility.
+- SOL/USDT (Solana): High-throughput retail & DeFi volume, DEX velocity.
+- NVDA/USD (NVIDIA Corp): AI semiconductor bellwether, tech market driver.
+
+Return strictly a valid JSON object without Markdown formatting or code fences:
+{
+  "overallScore": 74,
+  "classification": "Greed",
+  "previousScore": 68,
+  "lastWeekScore": 62,
+  "lastMonthScore": 54,
+  "marketPhase": "Bullish Accumulation & Utility Expansion",
+  "summary": "Institutional inflows into spot Bitcoin and Ethereum funds remain robust, with risk-on positioning expanding into ecosystem utility tokens like CoreToken (CT). Low leverage liquidations indicate organic spot-driven demand.",
+  "dominantDriver": "Institutional Spot Inflows & CoreToken Staking Lockups",
+  "factors": [
+    { "name": "Institutional Flow", "score": 84, "weight": "25%", "trend": "Accelerating", "description": "Sustained net inflows into Bitcoin and Ethereum spot funds exceeding $840M weekly." },
+    { "name": "Market Momentum & Volume", "score": 76, "weight": "25%", "trend": "Strong", "description": "Spot trading turnover comfortably outpacing short-term derivative liquidations." },
+    { "name": "DeFi & Utility Staking", "score": 82, "weight": "20%", "trend": "Bullish", "description": "High CoreToken (CT) staking lockups and Sovereign Relic NFT engagement reducing float." },
+    { "name": "Volatility Regime (VIX / DVOL)", "score": 66, "weight": "15%", "trend": "Stable", "description": "Controlled implied volatility providing stable runway for steady capital allocation." },
+    { "name": "Social & Retail Sentiment", "score": 72, "weight": "15%", "trend": "Positive", "description": "Growing trader confidence anchored by actual platform utilities rather than speculative mania." }
+  ],
+  "assetSentiments": [
+    {
+      "symbol": "BTC/USDT",
+      "name": "Bitcoin",
+      "score": 78,
+      "sentiment": "Greed",
+      "signal": "BULLISH",
+      "catalyst": "Institutional spot ETF accumulation and positive multi-quarter macro tailwinds.",
+      "supportLevel": "$88,500",
+      "resistanceLevel": "$94,200",
+      "momentum": "Strong Up"
+    },
+    {
+      "symbol": "ETH/USDT",
+      "name": "Ethereum",
+      "score": 71,
+      "sentiment": "Greed",
+      "signal": "BULLISH",
+      "catalyst": "Layer-2 ecosystem transaction records and expanding enterprise staking adoption.",
+      "supportLevel": "$3,240",
+      "resistanceLevel": "$3,650",
+      "momentum": "Up"
+    },
+    {
+      "symbol": "CT/USDT",
+      "name": "CoreToken",
+      "score": 86,
+      "sentiment": "Extreme Greed",
+      "signal": "VERY BULLISH",
+      "catalyst": "High yield staking participation, NFT Vault Sovereign Relic utility, and trading fee rebate lockups.",
+      "supportLevel": "$1.65",
+      "resistanceLevel": "$2.20",
+      "momentum": "Strong Up"
+    },
+    {
+      "symbol": "SOL/USDT",
+      "name": "Solana",
+      "score": 74,
+      "sentiment": "Greed",
+      "signal": "BULLISH",
+      "catalyst": "High decentralized exchange turnover and persistent active wallet growth.",
+      "supportLevel": "$185.00",
+      "resistanceLevel": "$215.00",
+      "momentum": "Up"
+    },
+    {
+      "symbol": "NVDA/USD",
+      "name": "NVIDIA Corp",
+      "score": 69,
+      "sentiment": "Greed",
+      "signal": "BULLISH",
+      "catalyst": "Record high data center semiconductor demand and Blackwell architecture deployments.",
+      "supportLevel": "$138.00",
+      "resistanceLevel": "$148.50",
+      "momentum": "Moderate Up"
+    }
+  ],
+  "keyInsights": [
+    "Risk-on sentiment is supported by real liquidity inflows rather than excessive speculative leverage.",
+    "CoreToken (CT) demonstrates high relative strength within the platform ecosystem.",
+    "Support levels across major crypto assets remain well-defended on paper trading testnets."
+  ]
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+    });
+
+    const rawText = response.text || '';
+    let parsedData: any = null;
+
+    try {
+      const cleanJson = rawText
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
+      const firstBrace = cleanJson.indexOf('{');
+      const lastBrace = cleanJson.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        parsedData = JSON.parse(cleanJson.substring(firstBrace, lastBrace + 1));
+      } else {
+        parsedData = JSON.parse(cleanJson);
+      }
+    } catch (parseErr) {
+      console.warn('Could not parse Gemini sentiment JSON directly:', parseErr);
+    }
+
+    if (!parsedData || typeof parsedData.overallScore !== 'number') {
+      throw new Error('Invalid structure received from Gemini sentiment analysis');
+    }
+
+    const payload = {
+      success: true,
+      sentiment: {
+        ...parsedData,
+        updatedAt: new Date().toISOString(),
+        source: 'gemini-live',
+      },
+    };
+
+    sentimentCache = {
+      timestamp: Date.now(),
+      data: payload,
+    };
+
+    res.json(payload);
+  } catch (error: any) {
+    const isQuotaError =
+      error?.status === 429 ||
+      error?.message?.includes('429') ||
+      error?.message?.includes('RESOURCE_EXHAUSTED') ||
+      error?.message?.includes('quota');
+
+    if (isQuotaError) {
+      console.warn('Gemini sentiment analysis rate limit reached (429/quota). Serving cached institutional model.');
+    } else {
+      console.warn('Gemini sentiment note:', error.message || error);
+    }
+
+    const fallback = getFallbackSentiment();
+    const fallbackPayload = {
+      success: true,
+      sentiment: fallback,
+      isFallback: true,
+    };
+
+    sentimentCache = {
+      timestamp: Date.now() + (isQuotaError ? 10 * 60 * 1000 : 2 * 60 * 1000),
+      data: fallbackPayload,
+    };
+
+    res.json(fallbackPayload);
+  }
+});
+
 
 
