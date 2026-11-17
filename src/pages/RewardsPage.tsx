@@ -14,51 +14,70 @@ import {
   Check,
   ExternalLink,
   Wallet,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
 import { RewardCampaign } from '../types/index.ts';
 import { CORETOKEN_SPEC, addCoreTokenToMetaMask } from '../config/coreTokenContract.ts';
+import { fetchWithRetry } from '../utils/fetchWithRetry.ts';
 
 export const RewardsPage: React.FC = () => {
-  const { user, getAuthHeader, updateBalancesLocally } = useAuth();
+  const { user, loading: authLoading, getAuthHeader, updateBalancesLocally } = useAuth();
   const { addToast, setActivePage } = useTrading();
   const [copiedContract, setCopiedContract] = useState<boolean>(false);
 
   const [campaigns, setCampaigns] = useState<RewardCampaign[]>([]);
   const [claimedKeys, setClaimedKeys] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<boolean>(false);
   const [claimingKey, setClaimingKey] = useState<string | null>(null);
 
-  // Fetch campaigns and user claims
-  const fetchRewardsData = async () => {
+  // Fetch campaigns and user claims safely with retries
+  const fetchRewardsData = async (signal?: AbortSignal) => {
     try {
       setLoading(true);
-      const campRes = await fetch('/api/rewards');
+      setFetchError(false);
+
+      const campRes = await fetchWithRetry('/api/rewards', { signal }, 3);
+      if (signal?.aborted) return;
+
       if (campRes.ok) {
         const campData = await campRes.json();
         setCampaigns(campData.campaigns || []);
+      } else {
+        setFetchError(true);
       }
 
-      if (user) {
+      if (user?.uid) {
         const headers = await getAuthHeader();
-        const userRes = await fetch('/api/rewards/user', { headers });
+        if (signal?.aborted) return;
+        const userRes = await fetchWithRetry('/api/rewards/user', { headers, signal }, 3);
+        if (signal?.aborted) return;
+
         if (userRes.ok) {
           const userData = await userRes.json();
           const keys = (userData.claimed || []).map((c: any) => c.campaignKey);
           setClaimedKeys(keys);
         }
       }
-    } catch (e) {
-      console.error('Error fetching rewards data:', e);
+    } catch (e: any) {
+      if (e?.name === 'AbortError' || signal?.aborted) return;
+      console.warn('Rewards data fetch deferred after retries:', e);
+      setFetchError(true);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchRewardsData();
-  }, [user]);
+    if (authLoading) return;
+    const controller = new AbortController();
+    fetchRewardsData(controller.signal);
+    return () => controller.abort();
+  }, [user?.uid, authLoading]);
 
   const handleClaim = async (campaign: RewardCampaign) => {
     if (!user) {
@@ -69,11 +88,11 @@ export const RewardsPage: React.FC = () => {
     setClaimingKey(campaign.campaignKey);
     try {
       const headers = await getAuthHeader();
-      const res = await fetch('/api/rewards/claim', {
+      const res = await fetchWithRetry('/api/rewards/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify({ campaignKey: campaign.campaignKey }),
-      });
+      }, 2);
 
       const data = await res.json();
       if (!res.ok) {
@@ -251,6 +270,20 @@ export const RewardsPage: React.FC = () => {
           <div className="py-12 text-center font-mono text-xs text-gray-400">
             <Loader2 className="w-6 h-6 animate-spin mx-auto text-[#D4AF37] mb-2" />
             Loading campaigns...
+          </div>
+        ) : fetchError && campaigns.length === 0 ? (
+          <div className="py-10 px-6 bg-[#090D14] border border-[#1A2234] rounded-2xl text-center font-mono text-xs space-y-3">
+            <p className="text-gray-400">
+              Rewards service is momentarily reconnecting. Please retry syncing campaigns.
+            </p>
+            <button
+              type="button"
+              onClick={() => fetchRewardsData()}
+              className="px-4 py-2 bg-[#141C2C] hover:bg-[#1E283D] border border-[#D4AF37]/40 text-[#D4AF37] rounded-xl inline-flex items-center gap-2 transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Retry Loading Campaigns</span>
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

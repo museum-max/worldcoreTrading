@@ -287,7 +287,23 @@ export const DrawingsManagerModal: React.FC<DrawingsManagerModalProps> = ({
                           </div>
 
                           <div className="text-[11px] font-mono text-gray-400 mt-0.5">
-                            {drawing.type === 'trendline' && drawing.p2 ? (
+                            {drawing.type === 'fibonacci' && drawing.p2 ? (
+                              <span>
+                                Swing: ${drawing.p1.price.toLocaleString(undefined, { minimumFractionDigits: 2 })} →{' '}
+                                ${drawing.p2.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}{' '}
+                                <span className="text-[#D4AF37]">
+                                  (0.618: $
+                                  {(drawing.p2.price - (drawing.p2.price - drawing.p1.price) * 0.618).toLocaleString(
+                                    undefined,
+                                    {
+                                      minimumFractionDigits: Math.max(drawing.p1.price, drawing.p2.price) < 10 ? 4 : 2,
+                                      maximumFractionDigits: Math.max(drawing.p1.price, drawing.p2.price) < 10 ? 4 : 2,
+                                    }
+                                  )}
+                                  )
+                                </span>
+                              </span>
+                            ) : drawing.type === 'trendline' && drawing.p2 ? (
                               <span>
                                 ${drawing.p1.price.toLocaleString(undefined, { minimumFractionDigits: 2 })} →{' '}
                                 ${drawing.p2.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}

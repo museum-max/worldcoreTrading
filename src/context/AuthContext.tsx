@@ -186,7 +186,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             { Authorization: `Bearer ${token}` }
           );
         } catch (e) {
-          console.error('Error fetching user after auth state changed:', e);
+          console.warn('Deferred user sync after auth state changed:', e);
         }
       } else if (!web3Account) {
         // Automatically provide demo trader profile for instant preview access

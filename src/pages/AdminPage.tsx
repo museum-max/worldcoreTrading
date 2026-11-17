@@ -16,6 +16,7 @@ import {
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
 import { RewardCampaign } from '../types/index.ts';
+import { fetchWithRetry } from '../utils/fetchWithRetry.ts';
 
 interface AdminStats {
   totalUsers: number;
@@ -63,7 +64,7 @@ export const AdminPage: React.FC = () => {
       const headers = await getAuthHeader();
 
       // Stats
-      const statsRes = await fetch('/api/admin/stats', { headers });
+      const statsRes = await fetchWithRetry('/api/admin/stats', { headers }, 2);
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
@@ -80,21 +81,21 @@ export const AdminPage: React.FC = () => {
       }
 
       // Users
-      const usersRes = await fetch('/api/admin/users', { headers });
+      const usersRes = await fetchWithRetry('/api/admin/users', { headers }, 2);
       if (usersRes.ok) {
         const usersData = await usersRes.json();
         setUserList(usersData.users || []);
       }
 
       // Admin Activity Logs
-      const logsRes = await fetch('/api/admin/logs', { headers });
+      const logsRes = await fetchWithRetry('/api/admin/logs', { headers }, 2);
       if (logsRes.ok) {
         const logsData = await logsRes.json();
         setLogs(logsData.logs || []);
       }
 
       // Reward Campaigns
-      const campRes = await fetch('/api/rewards');
+      const campRes = await fetchWithRetry('/api/rewards', {}, 2);
       if (campRes.ok) {
         const campData = await campRes.json();
         setCampaigns(campData.campaigns || []);
@@ -108,7 +109,7 @@ export const AdminPage: React.FC = () => {
 
   useEffect(() => {
     fetchAdminData();
-  }, [user]);
+  }, [user?.uid]);
 
   const filteredUsers = userList.filter((u) => {
     const text = `${u.email} ${u.displayName} ${u.walletAddress} ${u.uid}`.toLowerCase();
