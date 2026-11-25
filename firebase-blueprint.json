@@ -114,6 +114,38 @@
         "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
       },
       "required": ["uid", "ctContractAddress", "tokenContract", "chainId", "updatedAt"]
+    },
+    "CtStake": {
+      "title": "CtStake",
+      "description": "Simulated CoreToken (CT) staking vault position with annual percentage yield (APY) and lock period tracking",
+      "type": "object",
+      "properties": {
+        "userUid": { "type": "string", "maxLength": 128 },
+        "amountCt": { "type": "number" },
+        "apyPercent": { "type": "number" },
+        "lockDays": { "type": "integer" },
+        "tierLabel": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["ACTIVE", "UNSTAKED"] },
+        "claimedYieldCt": { "type": "number" },
+        "stakedAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "unlockAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "lastClaimAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "unstakedAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": [
+        "userUid",
+        "amountCt",
+        "apyPercent",
+        "lockDays",
+        "tierLabel",
+        "status",
+        "claimedYieldCt",
+        "stakedAt",
+        "unlockAt",
+        "lastClaimAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -144,6 +176,10 @@
     "/ct_contracts/{contractUserId}": {
       "schema": { "$ref": "#/entities/CtTraderContract" },
       "description": "Per-user deterministic CoreToken (CT) trading contract address registry"
+    },
+    "/ct_stakes/{stakeId}": {
+      "schema": { "$ref": "#/entities/CtStake" },
+      "description": "CoreToken (CT) simulated staking vaults tracking locked balances and accrued annual yield"
     }
   }
 }

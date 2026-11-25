@@ -184,4 +184,26 @@ export interface LeaderboardResponse {
   updatedAt: string;
 }
 
+export interface CtStakingPoolTier {
+  lockDays: 30 | 90 | 180 | 365;
+  apyPercent: 8.5 | 14 | 21.5 | 32;
+  tierLabel: string;
+  minAmountCt: number;
+  description: string;
+}
 
+export interface CtStakeRecord {
+  id: string;
+  userUid: string;
+  amountCt: number;
+  apyPercent: number;
+  lockDays: number;
+  tierLabel: string;
+  status: 'ACTIVE' | 'UNSTAKED';
+  claimedYieldCt: number;
+  stakedAt: string;
+  unlockAt: string;
+  lastClaimAt: string;
+  unstakedAt?: string;
+  updatedAt: string;
+}

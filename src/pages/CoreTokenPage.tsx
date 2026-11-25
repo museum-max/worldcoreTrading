@@ -20,6 +20,7 @@ import {
   Link2,
   Loader2,
   Cpu,
+  Lock,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
@@ -36,12 +37,15 @@ import {
   formatShortAddress,
 } from '../config/coreTokenContract.ts';
 import { ReownWalletConnectCard } from '../components/ReownWalletConnectCard.tsx';
+import { AccountContractDisplay } from '../components/AccountContractDisplay.tsx';
+import { CtStakingSection } from '../components/CtStakingSection.tsx';
+import { isCtTradeSymbol } from '../utils/ctContractAddress.ts';
 
 export const CoreTokenPage: React.FC = () => {
   const { user, web3Account, linkWeb3Wallet, getAuthHeader, updateCtContractLocally } = useAuth();
-  const { addToast, setActivePage, setActiveSymbol, markets } = useTrading();
+  const { addToast, setActivePage, setActiveSymbol, markets, orders } = useTrading();
 
-  const [activeTab, setActiveTab] = useState<'wallet' | 'receive' | 'contract'>('wallet');
+  const [activeTab, setActiveTab] = useState<'wallet' | 'staking' | 'receive' | 'contract'>('wallet');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<SepoliaChainTelemetry | null>(null);
   const [telemetryLoading, setTelemetryLoading] = useState<boolean>(true);
@@ -51,10 +55,12 @@ export const CoreTokenPage: React.FC = () => {
   });
   const [walletActionLoading, setWalletActionLoading] = useState<boolean>(false);
   const [provisioningCt, setProvisioningCt] = useState<boolean>(false);
+  const [loadingCtContract, setLoadingCtContract] = useState<boolean>(false);
   const [hasCtTrades, setHasCtTrades] = useState<boolean>(false);
 
   const activeAddress = user?.walletAddress || web3Account?.address || '';
   const userCtContractAddress = user?.ctContractAddress || '';
+  const ctOrders = orders.filter((o) => isCtTradeSymbol(o.symbol));
   const ctMarket = markets.find((m) => m.symbol === 'CT/USDT');
   const ctPrice = ctMarket?.price || 1.84;
   const demoCtBalance = parseFloat(user?.demoCtBalance || '25000');
@@ -82,6 +88,7 @@ export const CoreTokenPage: React.FC = () => {
   useEffect(() => {
     if (!user?.uid) return;
     let cancelled = false;
+    setLoadingCtContract(true);
     (async () => {
       try {
         const headers = await getAuthHeader();
@@ -95,6 +102,10 @@ export const CoreTokenPage: React.FC = () => {
         }
       } catch {
         // Non-blocking sync
+      } finally {
+        if (!cancelled) {
+          setLoadingCtContract(false);
+        }
       }
     })();
     return () => {
@@ -287,18 +298,30 @@ export const CoreTokenPage: React.FC = () => {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {userCtContractAddress ? (
-                  <button
-                    type="button"
-                    onClick={() => handleCopy('Your CT Trader Contract', userCtContractAddress)}
-                    className="px-3 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-200 rounded-xl flex items-center gap-1.5 transition-colors whitespace-nowrap"
-                  >
-                    {copiedField === 'Your CT Trader Contract' ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5 text-cyan-400" />
-                    )}
-                    <span>{copiedField === 'Your CT Trader Contract' ? 'Copied' : 'Copy My Contract'}</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy('Your CT Trader Contract', userCtContractAddress)}
+                      className="px-3 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-200 rounded-xl flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {copiedField === 'Your CT Trader Contract' ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                      )}
+                      <span>{copiedField === 'Your CT Trader Contract' ? 'Copied' : 'Copy My Contract'}</span>
+                    </button>
+                    <a
+                      href={`${CORETOKEN_SPEC.chain.explorerUrl}/address/${userCtContractAddress}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-2 bg-[#141C2C] hover:bg-[#1E283D] border border-[#1A2234] text-sky-400 rounded-xl flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                      title="View contract transaction history on Sepolia Etherscan"
+                    >
+                      <span>Explorer</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </>
                 ) : (
                   <button
                     type="button"
@@ -348,20 +371,28 @@ export const CoreTokenPage: React.FC = () => {
               <ArrowUpRight className="w-3.5 h-3.5 text-sky-400" />
             </button>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 onClick={() => {
                   setActiveSymbol('CT/USDT');
                   setActivePage('terminal');
                 }}
-                className="py-2 px-3 bg-[#0D121D] hover:bg-[#161F30] border border-[#1A2234] text-gray-200 rounded-xl flex items-center justify-center gap-1 transition-colors"
+                className="py-2 px-2.5 bg-[#0D121D] hover:bg-[#161F30] border border-[#1A2234] text-gray-200 rounded-xl flex items-center justify-center gap-1 transition-colors whitespace-nowrap"
               >
                 <span>Trade CT</span>
                 <ArrowUpRight className="w-3.5 h-3.5 text-[#D4AF37]" />
               </button>
               <button
+                type="button"
+                onClick={() => setActiveTab('staking')}
+                className="py-2 px-2.5 bg-[#0D121D] hover:bg-[#161F30] border border-[#D4AF37]/40 text-[#D4AF37] font-semibold rounded-xl flex items-center justify-center gap-1 transition-colors whitespace-nowrap"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Stake CT</span>
+              </button>
+              <button
                 onClick={() => setActivePage('rewards')}
-                className="py-2 px-3 bg-[#0D121D] hover:bg-[#161F30] border border-[#1A2234] text-gray-200 rounded-xl flex items-center justify-center gap-1 transition-colors"
+                className="py-2 px-2.5 bg-[#0D121D] hover:bg-[#161F30] border border-[#1A2234] text-gray-200 rounded-xl flex items-center justify-center gap-1 transition-colors whitespace-nowrap"
               >
                 <Gift className="w-3.5 h-3.5 text-[#D4AF37]" />
                 <span>Earn CT</span>
@@ -386,10 +417,10 @@ export const CoreTokenPage: React.FC = () => {
 
       {/* Section Navigation Tabs */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#1A2234] pb-3 font-mono text-xs">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setActiveTab('wallet')}
-            className={`px-4 py-2 rounded-xl flex items-center gap-2 font-bold transition-all ${
+            className={`px-4 py-2 rounded-xl flex items-center gap-2 font-bold transition-all whitespace-nowrap ${
               activeTab === 'wallet'
                 ? 'bg-[#D4AF37] text-black shadow-md'
                 : 'bg-[#090D14] text-gray-400 hover:text-white border border-[#1A2234]'
@@ -399,8 +430,19 @@ export const CoreTokenPage: React.FC = () => {
             <span>CoreToken Wallet & Telemetry</span>
           </button>
           <button
+            onClick={() => setActiveTab('staking')}
+            className={`px-4 py-2 rounded-xl flex items-center gap-2 font-bold transition-all whitespace-nowrap ${
+              activeTab === 'staking'
+                ? 'bg-[#D4AF37] text-black shadow-md'
+                : 'bg-[#090D14] text-gray-400 hover:text-white border border-[#1A2234]'
+            }`}
+          >
+            <Lock className="w-4 h-4" />
+            <span>Staking & Yield</span>
+          </button>
+          <button
             onClick={() => setActiveTab('receive')}
-            className={`px-4 py-2 rounded-xl flex items-center gap-2 font-bold transition-all ${
+            className={`px-4 py-2 rounded-xl flex items-center gap-2 font-bold transition-all whitespace-nowrap ${
               activeTab === 'receive'
                 ? 'bg-[#D4AF37] text-black shadow-md'
                 : 'bg-[#090D14] text-gray-400 hover:text-white border border-[#1A2234]'
@@ -411,7 +453,7 @@ export const CoreTokenPage: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('contract')}
-            className={`px-4 py-2 rounded-xl flex items-center gap-2 font-bold transition-all ${
+            className={`px-4 py-2 rounded-xl flex items-center gap-2 font-bold transition-all whitespace-nowrap ${
               activeTab === 'contract'
                 ? 'bg-[#D4AF37] text-black shadow-md'
                 : 'bg-[#090D14] text-gray-400 hover:text-white border border-[#1A2234]'
@@ -434,7 +476,28 @@ export const CoreTokenPage: React.FC = () => {
 
       {/* TAB 1: WALLET & TELEMETRY */}
       {activeTab === 'wallet' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="space-y-6">
+          <AccountContractDisplay
+            userUid={user?.uid}
+            accountLabel={user?.displayName || user?.email || (activeAddress ? formatShortAddress(activeAddress) : 'Guest Session')}
+            userCtContractAddress={userCtContractAddress}
+            walletAddress={activeAddress}
+            hasCtTrades={hasCtTrades}
+            ctOrders={ctOrders}
+            loadingCtContract={loadingCtContract}
+            provisioningCt={provisioningCt}
+            copiedField={copiedField}
+            onCopy={handleCopy}
+            onProvisionCtContract={handleProvisionCtContract}
+            onConnectWallet={handleConnectWallet}
+            onTradeCt={() => {
+              setActiveSymbol('CT/USDT');
+              setActivePage('terminal');
+            }}
+            onViewInAppHistory={() => setActivePage('history')}
+          />
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column: Paper Ledger + Connected Web3 Wallet */}
           <div className="lg:col-span-7 space-y-6">
             {/* Demo Paper Balances */}
@@ -615,8 +678,14 @@ export const CoreTokenPage: React.FC = () => {
               </p>
             </div>
           </div>
+          </div>
+
+          <CtStakingSection ctPrice={ctPrice} />
         </div>
       )}
+
+      {/* DEDICATED TAB: STAKING & YIELD */}
+      {activeTab === 'staking' && <CtStakingSection ctPrice={ctPrice} />}
 
       {/* TAB 2: RECEIVE & IMPORT TOKEN */}
       {activeTab === 'receive' && (

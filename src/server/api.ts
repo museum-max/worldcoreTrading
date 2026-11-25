@@ -44,9 +44,11 @@ export const apiRouter = express.Router();
 apiRouter.use(express.json());
 
 // Ensure all historical CT traders in Cloud SQL are assigned a deterministic EIP-55 CT contract address
-backfillAllCtTraders().catch((err) => {
-  console.warn('Initial CT trader backfill notice:', err instanceof Error ? err.message : err);
-});
+setTimeout(() => {
+  backfillAllCtTraders().catch((err) => {
+    console.warn('Initial CT trader backfill notice:', err instanceof Error ? err.message : err);
+  });
+}, 1500).unref();
 
 // Market asset definitions with realistic live simulated updates
 interface MarketAsset {
@@ -425,6 +427,87 @@ apiRouter.post('/token/ct-contract/provision', requireAuth, async (req: AuthRequ
   } catch (error: any) {
     console.error('Error provisioning user CT contract address:', error);
     res.status(500).json({ error: error.message || 'Failed to provision CT trading contract' });
+  }
+});
+
+// Synchronize simulated demo CoreToken (CT) balance when locking, claiming yield, or unstaking in Firestore
+apiRouter.post('/staking/sync-balance', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const { action, amountCt, yieldCt = 0, tierLabel, lockDays } = req.body || {};
+
+    if (!['lock', 'claim', 'unstake', 'rollback'].includes(action)) {
+      return res.status(400).json({ error: 'Invalid staking action. Expected lock, claim, unstake, or rollback.' });
+    }
+
+    const parsedAmount = Number(amountCt);
+    const parsedYield = Number(yieldCt || 0);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || parsedAmount > 10000000) {
+      return res.status(400).json({ error: 'Invalid CT token amount.' });
+    }
+    if (!Number.isFinite(parsedYield) || parsedYield < 0 || parsedYield > 1000000) {
+      return res.status(400).json({ error: 'Invalid yield CT amount.' });
+    }
+
+    let user = await getUser(uid);
+    if (!user) {
+      user = await getOrCreateUser(
+        uid,
+        req.user?.email,
+        req.user?.name,
+        req.user?.picture,
+        req.user?.walletAddress
+      );
+    }
+
+    const currentCt = parseFloat(user.demoCtBalance || '0');
+    let nextCt = currentCt;
+
+    if (action === 'lock') {
+      if (currentCt + 1e-6 < parsedAmount) {
+        return res.status(400).json({
+          error: `Insufficient simulated CoreToken (CT) balance. Available: ${currentCt.toLocaleString()} CT.`,
+        });
+      }
+      nextCt = Math.max(0, currentCt - parsedAmount);
+      await addAdminLog(
+        uid,
+        'CT_STAKE_LOCKED',
+        `User ${uid} locked ${parsedAmount.toFixed(4)} demo CT in ${tierLabel || 'CT Vault'} (${lockDays || 30}d).`
+      );
+    } else if (action === 'claim') {
+      if (parsedAmount > 1000000) {
+        return res.status(400).json({ error: 'Claimable simulated yield exceeds single-claim limit.' });
+      }
+      nextCt = currentCt + parsedAmount;
+      await addAdminLog(
+        uid,
+        'CT_STAKE_YIELD_CLAIMED',
+        `User ${uid} claimed +${parsedAmount.toFixed(4)} demo CT staking yield.`
+      );
+    } else if (action === 'unstake') {
+      nextCt = currentCt + parsedAmount + parsedYield;
+      await addAdminLog(
+        uid,
+        'CT_STAKE_UNSTAKED',
+        `User ${uid} unstaked ${parsedAmount.toFixed(4)} demo CT (+${parsedYield.toFixed(4)} yield).`
+      );
+    } else if (action === 'rollback') {
+      nextCt = currentCt + parsedAmount;
+    }
+
+    const updatedUser = await updateUserBalances(uid, {
+      demoCtBalance: nextCt.toFixed(4),
+    });
+
+    res.json({
+      success: true,
+      user: updatedUser,
+      demoCtBalance: updatedUser?.demoCtBalance || nextCt.toFixed(4),
+    });
+  } catch (error: any) {
+    console.error('Error syncing CT staking balance:', error);
+    res.status(500).json({ error: error.message || 'Failed to synchronize CT staking balance' });
   }
 });
 

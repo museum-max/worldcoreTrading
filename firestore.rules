@@ -147,6 +147,56 @@ service cloud.firestore {
         data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64;
     }
 
+    function isValidStakeTier(lockDays, apyPercent) {
+      return (lockDays == 30 && apyPercent == 8.5) ||
+        (lockDays == 90 && (apyPercent == 14 || apyPercent == 14.0)) ||
+        (lockDays == 180 && apyPercent == 21.5) ||
+        (lockDays == 365 && (apyPercent == 32 || apyPercent == 32.0));
+    }
+
+    function isValidCtStake(data) {
+      return data.keys().hasAll([
+          'userUid',
+          'amountCt',
+          'apyPercent',
+          'lockDays',
+          'tierLabel',
+          'status',
+          'claimedYieldCt',
+          'stakedAt',
+          'unlockAt',
+          'lastClaimAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userUid',
+          'amountCt',
+          'apyPercent',
+          'lockDays',
+          'tierLabel',
+          'status',
+          'claimedYieldCt',
+          'stakedAt',
+          'unlockAt',
+          'lastClaimAt',
+          'unstakedAt',
+          'updatedAt'
+        ]) &&
+        data.userUid is string && data.userUid.size() > 0 && data.userUid.size() <= 128 &&
+        data.amountCt is number && data.amountCt > 0 && data.amountCt <= 10000000 &&
+        data.apyPercent is number &&
+        data.lockDays is int &&
+        isValidStakeTier(data.lockDays, data.apyPercent) &&
+        data.tierLabel is string && data.tierLabel.size() > 0 && data.tierLabel.size() <= 64 &&
+        data.status in ['ACTIVE', 'UNSTAKED'] &&
+        data.claimedYieldCt is number && data.claimedYieldCt >= 0 && data.claimedYieldCt <= 10000000 &&
+        data.stakedAt is string && data.stakedAt.size() > 0 && data.stakedAt.size() <= 64 &&
+        data.unlockAt is string && data.unlockAt.size() > 0 && data.unlockAt.size() <= 64 &&
+        data.lastClaimAt is string && data.lastClaimAt.size() > 0 && data.lastClaimAt.size() <= 64 &&
+        (!('unstakedAt' in data) || (data.unstakedAt is string && data.unstakedAt.size() > 0 && data.unstakedAt.size() <= 64)) &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64;
+    }
+
     // Users collection (PII isolated to owner & admin; non-admins blocked from escalating role)
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
@@ -241,6 +291,47 @@ service cloud.firestore {
         incoming().ctContractAddress == existing().ctContractAddress &&
         (isOwner(contractUserId) || isAdmin());
       allow delete: if isValidId(contractUserId) && isAdmin();
+    }
+
+    // CoreToken (CT) simulated staking vaults & accrued annual yield tracking
+    match /ct_stakes/{stakeId} {
+      allow get: if isValidId(stakeId) && isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
+      allow create: if isValidId(stakeId) &&
+        isSignedIn() &&
+        isValidCtStake(incoming()) &&
+        incoming().userUid == request.auth.uid &&
+        incoming().status == 'ACTIVE' &&
+        (incoming().claimedYieldCt == 0 || incoming().claimedYieldCt == 0.0) &&
+        incoming().lastClaimAt == incoming().stakedAt &&
+        !('unstakedAt' in incoming());
+      allow update: if isValidId(stakeId) &&
+        isSignedIn() &&
+        isValidCtStake(incoming()) &&
+        (existing().userUid == request.auth.uid || isAdmin()) &&
+        (existing().status == 'ACTIVE' || isAdmin()) &&
+        incoming().userUid == existing().userUid &&
+        incoming().amountCt == existing().amountCt &&
+        incoming().apyPercent == existing().apyPercent &&
+        incoming().lockDays == existing().lockDays &&
+        incoming().tierLabel == existing().tierLabel &&
+        incoming().stakedAt == existing().stakedAt &&
+        incoming().unlockAt == existing().unlockAt &&
+        incoming().claimedYieldCt >= existing().claimedYieldCt &&
+        (
+          (
+            incoming().status == 'ACTIVE' &&
+            !('unstakedAt' in incoming()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['claimedYieldCt', 'lastClaimAt', 'updatedAt'])
+          ) ||
+          (
+            incoming().status == 'UNSTAKED' &&
+            'unstakedAt' in incoming() &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'claimedYieldCt', 'lastClaimAt', 'unstakedAt', 'updatedAt'])
+          ) ||
+          isAdmin()
+        );
+      allow delete: if isValidId(stakeId) && isAdmin();
     }
   }
 }
