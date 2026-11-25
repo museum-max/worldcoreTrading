@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { integer, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
+import { boolean, integer, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
 
 // Users table with demo balances for paper trading
 export const users = pgTable('users', {
@@ -10,6 +10,7 @@ export const users = pgTable('users', {
   photoURL: text('photo_url'),
   role: text('role').default('user').notNull(), // 'user' | 'admin'
   walletAddress: text('wallet_address'),
+  ctContractAddress: text('ct_contract_address'), // Deterministic per-user CT Trading Contract Address (EIP-55)
   demoUsdBalance: text('demo_usd_balance').default('100000.00').notNull(),
   demoEthBalance: text('demo_eth_balance').default('10.00').notNull(),
   demoCtBalance: text('demo_ct_balance').default('25000.00').notNull(),
@@ -30,6 +31,7 @@ export const trades = pgTable('trades', {
   total: text('total').notNull(),
   status: text('status').default('filled').notNull(), // 'filled' | 'open' | 'cancelled'
   pnl: text('pnl').default('0.00').notNull(),
+  ctContractAddress: text('ct_contract_address'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
@@ -87,6 +89,20 @@ export const priceAlerts = pgTable('price_alerts', {
   note: text('note'),
   triggeredAt: timestamp('triggered_at'),
   createdAt: timestamp('created_at').defaultNow(),
+});
+
+// Global platform operational settings (e.g. Maintenance Mode)
+export const platformSettings = pgTable('platform_settings', {
+  id: serial('id').primaryKey(),
+  key: text('key').notNull().unique(),
+  maintenanceMode: boolean('maintenance_mode').default(false).notNull(),
+  maintenanceMessage: text('maintenance_message')
+    .default(
+      'Scheduled institutional liquidity & protocol maintenance is in progress. Trading terminal access and new order execution are temporarily paused for non-admin accounts.'
+    )
+    .notNull(),
+  updatedBy: text('updated_by').default('system').notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
 // Relationships

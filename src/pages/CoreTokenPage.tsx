@@ -18,6 +18,8 @@ import {
   Gift,
   Network,
   Link2,
+  Loader2,
+  Cpu,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
@@ -36,7 +38,7 @@ import {
 import { ReownWalletConnectCard } from '../components/ReownWalletConnectCard.tsx';
 
 export const CoreTokenPage: React.FC = () => {
-  const { user, web3Account, linkWeb3Wallet } = useAuth();
+  const { user, web3Account, linkWeb3Wallet, getAuthHeader, updateCtContractLocally } = useAuth();
   const { addToast, setActivePage, setActiveSymbol, markets } = useTrading();
 
   const [activeTab, setActiveTab] = useState<'wallet' | 'receive' | 'contract'>('wallet');
@@ -48,8 +50,11 @@ export const CoreTokenPage: React.FC = () => {
     ctOnChainBalance: '0.00',
   });
   const [walletActionLoading, setWalletActionLoading] = useState<boolean>(false);
+  const [provisioningCt, setProvisioningCt] = useState<boolean>(false);
+  const [hasCtTrades, setHasCtTrades] = useState<boolean>(false);
 
   const activeAddress = user?.walletAddress || web3Account?.address || '';
+  const userCtContractAddress = user?.ctContractAddress || '';
   const ctMarket = markets.find((m) => m.symbol === 'CT/USDT');
   const ctPrice = ctMarket?.price || 1.84;
   const demoCtBalance = parseFloat(user?.demoCtBalance || '25000');
@@ -73,6 +78,61 @@ export const CoreTokenPage: React.FC = () => {
   useEffect(() => {
     loadTelemetry();
   }, [activeAddress]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const headers = await getAuthHeader();
+        const res = await fetch('/api/token/ct-contract/me', { headers });
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setHasCtTrades(Boolean(data.hasCtTrades));
+          if (data.ctContractAddress && data.ctContractAddress !== user.ctContractAddress) {
+            updateCtContractLocally(data.ctContractAddress);
+          }
+        }
+      } catch {
+        // Non-blocking sync
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, user?.ctContractAddress, getAuthHeader, updateCtContractLocally]);
+
+  const handleProvisionCtContract = async () => {
+    if (!user?.uid) {
+      addToast('info', 'Sign In Required', 'Sign in or connect a Web3 wallet to generate your CT trader contract address.');
+      return;
+    }
+    setProvisioningCt(true);
+    try {
+      const headers = await getAuthHeader();
+      const res = await fetch('/api/token/ct-contract/provision', {
+        method: 'POST',
+        headers,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Could not assign CT trader contract address.');
+      }
+      if (data.ctContractAddress) {
+        updateCtContractLocally(data.ctContractAddress);
+        setHasCtTrades(Boolean(data.hasCtTrades));
+        addToast(
+          'success',
+          data.newlyAssigned ? 'CT Trader Contract Assigned' : 'CT Trader Contract Verified',
+          `Bound address ${data.ctContractAddress} to your CoreToken paper settlement ledger.`
+        );
+      }
+    } catch (err: any) {
+      addToast('error', 'Provisioning Failed', err?.message || 'Unable to generate CT contract address.');
+    } finally {
+      setProvisioningCt(false);
+    }
+  };
 
   const handleCopy = (label: string, value: string) => {
     navigator.clipboard.writeText(value);
@@ -202,6 +262,60 @@ export const CoreTokenPage: React.FC = () => {
                 </a>
               </div>
             </div>
+
+            {/* Per-User Dedicated CT Trader Contract Address */}
+            <div className="p-3.5 bg-[#090D14] border border-cyan-500/35 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono text-xs">
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Cpu className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span className="text-[10px] uppercase tracking-wider text-cyan-300 font-bold">
+                    Your Personal CT Trader Contract Address
+                  </span>
+                  <span className="text-[10px] text-gray-400">
+                    ({hasCtTrades ? 'Active CT Trader Vault' : 'Staged Sepolia CREATE2 • Paper Ledger'})
+                  </span>
+                </div>
+                {userCtContractAddress ? (
+                  <div className="text-sm font-bold text-white break-all tabular-nums">
+                    {userCtContractAddress}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400">
+                    Automatically generated on your first CT/USDT trade, or provision your deterministic vault contract now.
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {userCtContractAddress ? (
+                  <button
+                    type="button"
+                    onClick={() => handleCopy('Your CT Trader Contract', userCtContractAddress)}
+                    className="px-3 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-200 rounded-xl flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                  >
+                    {copiedField === 'Your CT Trader Contract' ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                    )}
+                    <span>{copiedField === 'Your CT Trader Contract' ? 'Copied' : 'Copy My Contract'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleProvisionCtContract}
+                    disabled={provisioningCt}
+                    className="px-3.5 py-2 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-xl flex items-center gap-1.5 transition-colors whitespace-nowrap disabled:opacity-50"
+                  >
+                    {provisioningCt ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Cpu className="w-3.5 h-3.5" />
+                    )}
+                    <span>{provisioningCt ? 'Assigning...' : 'Generate My CT Contract'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Right Quick Wallet Actions */}
@@ -224,16 +338,15 @@ export const CoreTokenPage: React.FC = () => {
               <span>Switch Wallet to Sepolia</span>
             </button>
 
-            <a
-              href={REOWN_WALLETCONNECT_PAY.url}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={() => setActivePage('reown-pay')}
               className="w-full py-2.5 px-4 bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 border border-sky-400/50 text-sky-200 font-semibold rounded-xl flex items-center justify-center gap-2 transition-all"
             >
               <Link2 className="w-4 h-4 text-sky-400" />
-              <span>Reown WalletConnect Pay</span>
-              <ExternalLink className="w-3.5 h-3.5 text-sky-400" />
-            </a>
+              <span>Reown Pay Portal</span>
+              <ArrowUpRight className="w-3.5 h-3.5 text-sky-400" />
+            </button>
 
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -470,9 +583,9 @@ export const CoreTokenPage: React.FC = () => {
                   {telemetry?.gasPriceGwei ? `${telemetry.gasPriceGwei} Gwei` : '—'}
                 </span>
               </div>
-              <div className="py-2.5 flex justify-between">
+              <div className="py-2.5 flex justify-between gap-4">
                 <span className="text-gray-400">Token Standard:</span>
-                <span className="text-white font-bold">ERC-20 / EIP-2612</span>
+                <span className="text-white font-bold text-right">{CORETOKEN_SPEC.standard}</span>
               </div>
               <div className="py-2.5 flex justify-between">
                 <span className="text-gray-400">Decimals:</span>
@@ -601,7 +714,7 @@ export const CoreTokenPage: React.FC = () => {
                 CoreToken (CT) Allocation Architecture (100,000,000 CT Cap)
               </h2>
               <span className="text-xs font-mono text-[#D4AF37]">
-                Genesis Circulating Supply: {CORETOKEN_SPEC.circulatingDemoSupply.toLocaleString()} CT
+                Fixed Genesis Supply: {CORETOKEN_SPEC.maxSupply.toLocaleString()} CT • Simulated Demo Supply: {CORETOKEN_SPEC.circulatingDemoSupply.toLocaleString()} CT
               </span>
             </div>
 

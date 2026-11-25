@@ -1,11 +1,15 @@
 import express from 'express';
-import { Type } from '@google/genai';
-import { requireAuth, AuthRequest } from '../middleware/auth.ts';
+import { Type, ThinkingLevel } from '@google/genai';
+import { requireAuth, requireAdmin, optionalAuth, AuthRequest } from '../middleware/auth.ts';
 import {
   getOrCreateUser,
   getUser,
   updateUserBalances,
   updateUserWallet,
+  updateUserRole,
+  createRewardCampaignAdmin,
+  updateRewardCampaignAdmin,
+  deleteRewardCampaignAdmin,
   getAllUsers,
   getUserTrades,
   getAllTrades,
@@ -22,15 +26,27 @@ import {
   deletePriceAlert,
   markAlertTriggered,
   resetPriceAlert,
+  getLeaderboardEntries,
+  getPlatformMaintenanceState,
+  setPlatformMaintenanceState,
+  ensureUserCtContractAddress,
+  backfillAllCtTraders,
+  getCtTradersRegistry,
 } from '../db/users.ts';
 import { getGeminiClient } from './gemini.ts';
 import { getFallbackNews } from './newsFallback.ts';
 import { getFallbackSentiment } from '../data/fallbackSentiment.ts';
 import { NFT_CATALOG } from '../data/nftCatalog.ts';
 import { CORETOKEN_SPEC, CORETOKEN_ERC20_ABI, REOWN_WALLETCONNECT_PAY } from '../config/coreTokenContract.ts';
+import { isCtTradeSymbol } from '../utils/ctContractAddress.ts';
 
 export const apiRouter = express.Router();
 apiRouter.use(express.json());
+
+// Ensure all historical CT traders in Cloud SQL are assigned a deterministic EIP-55 CT contract address
+backfillAllCtTraders().catch((err) => {
+  console.warn('Initial CT trader backfill notice:', err instanceof Error ? err.message : err);
+});
 
 // Market asset definitions with realistic live simulated updates
 interface MarketAsset {
@@ -264,14 +280,38 @@ apiRouter.get('/trades/recent/:symbol', (req, res) => {
 });
 
 // Auth Sync / Upsert user profile in Cloud SQL
-apiRouter.post('/auth/sync', async (req, res) => {
+apiRouter.post('/auth/sync', optionalAuth, async (req: AuthRequest, res) => {
   try {
-    const { uid, email, displayName, photoURL, walletAddress } = req.body;
+    const uid = req.user?.uid || req.body?.uid;
     if (!uid) {
       return res.status(400).json({ error: 'UID is required for synchronization' });
     }
 
-    const user = await getOrCreateUser(uid, email, displayName, photoURL, walletAddress);
+    const { displayName, photoURL, walletAddress } = req.body || {};
+    const verifiedEmail = req.user?.email;
+    const rawBodyEmail = typeof req.body?.email === 'string' ? req.body.email : undefined;
+    // Never accept unverified admin email claims from raw request body
+    const safeEmail = verifiedEmail || (rawBodyEmail?.trim().toLowerCase() === 'joaquineleonardo@gmail.com' ? undefined : rawBodyEmail);
+    const allowAdminBootstrap = Boolean(
+      req.user?.firebaseVerified &&
+      req.user?.emailVerified &&
+      verifiedEmail?.trim().toLowerCase() === 'joaquineleonardo@gmail.com'
+    );
+
+    let user = await getOrCreateUser(
+      uid,
+      safeEmail,
+      req.user?.name || displayName,
+      req.user?.picture || photoURL,
+      req.user?.walletAddress || walletAddress,
+      allowAdminBootstrap
+    );
+    if (!user.ctContractAddress) {
+      const ctRes = await ensureUserCtContractAddress(uid, { forceIfNoTrades: false });
+      if (ctRes.ctContractAddress) {
+        user = { ...user, ctContractAddress: ctRes.ctContractAddress };
+      }
+    }
     res.json({ success: true, user });
   } catch (error: any) {
     console.error('Error syncing user:', error);
@@ -283,16 +323,29 @@ apiRouter.post('/auth/sync', async (req, res) => {
 apiRouter.get('/user/profile', requireAuth, async (req: AuthRequest, res) => {
   try {
     const uid = req.user!.uid;
-    let user = await getUser(uid);
+    const allowAdminBootstrap = Boolean(
+      req.user?.firebaseVerified &&
+      req.user?.emailVerified &&
+      req.user?.email?.trim().toLowerCase() === 'joaquineleonardo@gmail.com'
+    );
 
-    if (!user) {
+    let user = await getUser(uid);
+    if (!user || (allowAdminBootstrap && user.role !== 'admin')) {
       user = await getOrCreateUser(
         uid,
         req.user?.email,
         req.user?.name,
         req.user?.picture,
-        req.user?.walletAddress
+        req.user?.walletAddress,
+        allowAdminBootstrap
       );
+    }
+
+    if (user && !user.ctContractAddress) {
+      const ctRes = await ensureUserCtContractAddress(uid, { forceIfNoTrades: false });
+      if (ctRes.ctContractAddress) {
+        user = { ...user, ctContractAddress: ctRes.ctContractAddress };
+      }
     }
 
     res.json({ user });
@@ -325,12 +378,54 @@ apiRouter.get('/token/coretoken', (_req, res) => {
     ...CORETOKEN_SPEC,
     walletConnectReown: REOWN_WALLETCONNECT_PAY,
     abiSummary: CORETOKEN_ERC20_ABI.map((item) => ({
-      name: item.name,
+      name: 'name' in item ? item.name : 'constructor',
       type: item.type,
       stateMutability: 'stateMutability' in item ? item.stateMutability : undefined,
     })),
     market: ctMarket,
   });
+});
+
+// Get the authenticated user's deterministic CT trading contract address (if assigned or backfilled)
+apiRouter.get('/token/ct-contract/me', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const result = await ensureUserCtContractAddress(uid, { forceIfNoTrades: false });
+    res.json({
+      ctContractAddress: result.ctContractAddress,
+      newlyAssigned: result.newlyAssigned,
+      hasCtTrades: result.hasCtTrades,
+      masterContractAddress: CORETOKEN_SPEC.contractAddress,
+      chainId: CORETOKEN_SPEC.chain.chainId,
+      network: CORETOKEN_SPEC.chain.name,
+      standard: CORETOKEN_SPEC.standard,
+    });
+  } catch (error: any) {
+    console.error('Error fetching user CT contract address:', error);
+    res.status(500).json({ error: error.message || 'Failed to inspect CT trading contract' });
+  }
+});
+
+// Provision a deterministic CT trading contract address for the authenticated user
+apiRouter.post('/token/ct-contract/provision', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const result = await ensureUserCtContractAddress(uid, { forceIfNoTrades: true });
+    const updatedUser = await getUser(uid);
+    res.json({
+      success: true,
+      ctContractAddress: result.ctContractAddress,
+      newlyAssigned: result.newlyAssigned,
+      hasCtTrades: result.hasCtTrades,
+      masterContractAddress: CORETOKEN_SPEC.contractAddress,
+      chainId: CORETOKEN_SPEC.chain.chainId,
+      network: CORETOKEN_SPEC.chain.name,
+      user: updatedUser,
+    });
+  } catch (error: any) {
+    console.error('Error provisioning user CT contract address:', error);
+    res.status(500).json({ error: error.message || 'Failed to provision CT trading contract' });
+  }
 });
 
 // Deposit Simulated Paper USD
@@ -504,6 +599,29 @@ apiRouter.post('/orders', requireAuth, async (req: AuthRequest, res) => {
       return res.status(404).json({ error: 'User profile not found' });
     }
 
+    // Enforce Global Maintenance Mode: block non-admin order placement
+    const platformStatus = await getPlatformMaintenanceState();
+    if (platformStatus.maintenanceMode) {
+      const normalizedEmail = req.user!.email?.trim().toLowerCase();
+      const isVerifiedRootAdmin =
+        Boolean(req.user!.firebaseVerified) &&
+        !req.user!.isWeb3 &&
+        normalizedEmail === 'joaquineleonardo@gmail.com' &&
+        req.user!.emailVerified === true;
+      const isVerifiedAdmin =
+        Boolean(req.user!.firebaseVerified) &&
+        !req.user!.isWeb3 &&
+        (user.role === 'admin' || isVerifiedRootAdmin);
+
+      if (!isVerifiedAdmin) {
+        return res.status(503).json({
+          error: 'Trading temporarily suspended: Platform Maintenance Mode is active.',
+          maintenanceMode: true,
+          maintenanceMessage: platformStatus.maintenanceMessage,
+        });
+      }
+    }
+
     let currentUsd = parseFloat(user.demoUsdBalance || '0');
     let currentCt = parseFloat(user.demoCtBalance || '0');
     let currentEth = parseFloat(user.demoEthBalance || '0');
@@ -547,6 +665,20 @@ apiRouter.post('/orders', requireAuth, async (req: AuthRequest, res) => {
       demoEthBalance: currentEth.toFixed(2),
     });
 
+    // Provision deterministic CT trading contract address whenever a user trades CoreToken (CT)
+    const ctTrade = isCtTradeSymbol(symbol);
+    let ctProvision: { ctContractAddress: string | null; newlyAssigned: boolean } = {
+      ctContractAddress: user.ctContractAddress || null,
+      newlyAssigned: false,
+    };
+    if (ctTrade) {
+      const assigned = await ensureUserCtContractAddress(uid, { forceIfNoTrades: true });
+      ctProvision = {
+        ctContractAddress: assigned.ctContractAddress,
+        newlyAssigned: assigned.newlyAssigned,
+      };
+    }
+
     // Record trade in Cloud SQL
     const trade = await recordTrade({
       userUid: uid,
@@ -558,11 +690,14 @@ apiRouter.post('/orders', requireAuth, async (req: AuthRequest, res) => {
       total,
       status: type === 'limit' ? 'open' : 'filled',
       pnl: '0.00',
+      ctContractAddress: ctTrade ? (ctProvision.ctContractAddress || undefined) : undefined,
     });
 
     res.json({
       success: true,
       trade,
+      ctContractAddress: ctProvision.ctContractAddress,
+      ctContractNewlyAssigned: ctProvision.newlyAssigned,
       updatedBalances: {
         demoUsdBalance: currentUsd.toFixed(2),
         demoCtBalance: currentCt.toFixed(2),
@@ -658,25 +793,41 @@ apiRouter.post('/rewards/claim', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// Admin endpoints
-apiRouter.get('/admin/stats', requireAuth, async (req: AuthRequest, res) => {
+// Admin endpoints (Strictly protected by verified Firebase ID token + Admin RBAC)
+apiRouter.get('/admin/session', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
   try {
-    const uid = req.user!.uid;
-    const user = await getUser(uid);
+    const dbUser = await getUser(req.user!.uid);
+    res.json({
+      isAdmin: true,
+      admin: {
+        uid: req.user!.uid,
+        email: req.user?.email || dbUser?.email || '',
+        displayName: dbUser?.displayName || req.user?.name || 'Administrator',
+        role: 'admin',
+      },
+      verifiedAt: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to verify admin session' });
+  }
+});
 
-    if (user?.role !== 'admin' && !req.user?.email?.includes('admin') && req.user?.email !== 'joaquineleonardo@gmail.com') {
-      return res.status(403).json({ error: 'Forbidden: Admin access required' });
-    }
-
-    const allUsers = await getAllUsers();
-    const allTrades = await getAllTrades(500);
+apiRouter.get('/admin/stats', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {
+  try {
+    const [allUsers, allTrades, campaigns] = await Promise.all([
+      getAllUsers(),
+      getAllTrades(500),
+      getCampaigns(),
+    ]);
 
     const totalSimulatedVolume = allTrades.reduce((acc, t) => acc + (parseFloat(t.total) || 0), 0);
 
     res.json({
       totalUsers: allUsers.length,
-      activeUsers: allUsers.filter((u) => u.demoUsdBalance !== '100000.00').length + 1,
+      activeUsers: allUsers.filter((u) => u.demoUsdBalance !== '100000.00' || u.role === 'admin').length,
+      adminCount: allUsers.filter((u) => u.role === 'admin').length,
       totalTrades: allTrades.length,
+      totalCampaigns: campaigns.length,
       totalVolumeUsd: totalSimulatedVolume,
       database: 'Cloud SQL for PostgreSQL (Live)',
       serverTime: new Date().toISOString(),
@@ -687,14 +838,8 @@ apiRouter.get('/admin/stats', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-apiRouter.get('/admin/users', requireAuth, async (req: AuthRequest, res) => {
+apiRouter.get('/admin/users', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {
   try {
-    const uid = req.user!.uid;
-    const user = await getUser(uid);
-    if (user?.role !== 'admin' && req.user?.email !== 'joaquineleonardo@gmail.com') {
-      return res.status(403).json({ error: 'Forbidden: Admin access required' });
-    }
-
     const list = await getAllUsers();
     res.json({ users: list });
   } catch (error: any) {
@@ -703,19 +848,247 @@ apiRouter.get('/admin/users', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-apiRouter.get('/admin/logs', requireAuth, async (req: AuthRequest, res) => {
+apiRouter.patch('/admin/users/:uid/role', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
   try {
-    const uid = req.user!.uid;
-    const user = await getUser(uid);
-    if (user?.role !== 'admin' && req.user?.email !== 'joaquineleonardo@gmail.com') {
-      return res.status(403).json({ error: 'Forbidden: Admin access required' });
+    const targetUid = String(req.params.uid || '').trim();
+    const nextRole = req.body?.role;
+    if (!targetUid || (nextRole !== 'user' && nextRole !== 'admin')) {
+      return res.status(400).json({ error: 'Valid target UID and role ("user" | "admin") are required.' });
+    }
+    if (targetUid === req.user!.uid && nextRole !== 'admin') {
+      return res.status(400).json({ error: 'You cannot revoke your own active administrator role.' });
     }
 
-    const logs = await getAdminLogsList(50);
+    const updated = await updateUserRole(targetUid, nextRole);
+    await addAdminLog(
+      req.user!.uid,
+      'ROLE_UPDATED',
+      `Admin ${req.user?.email || req.user!.uid} set role="${nextRole}" for user ${updated.email || targetUid} (${targetUid}).`
+    );
+    res.json({ success: true, user: updated });
+  } catch (error: any) {
+    console.error('Error updating user role:', error);
+    res.status(400).json({ error: error.message || 'Failed to update user role' });
+  }
+});
+
+apiRouter.patch('/admin/users/:uid/balances', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const targetUid = String(req.params.uid || '').trim();
+    if (!targetUid) {
+      return res.status(400).json({ error: 'Target user UID is required.' });
+    }
+
+    const existing = await getUser(targetUid);
+    if (!existing) {
+      return res.status(404).json({ error: 'Target user not found.' });
+    }
+
+    const payload: { demoUsdBalance?: string; demoEthBalance?: string; demoCtBalance?: string } = {};
+    if (req.body?.demoUsdBalance !== undefined) {
+      const val = parseFloat(req.body.demoUsdBalance);
+      if (!Number.isFinite(val) || val < 0 || val > 100000000) {
+        return res.status(400).json({ error: 'Demo USD balance must be between 0 and 100,000,000.' });
+      }
+      payload.demoUsdBalance = val.toFixed(2);
+    }
+    if (req.body?.demoEthBalance !== undefined) {
+      const val = parseFloat(req.body.demoEthBalance);
+      if (!Number.isFinite(val) || val < 0 || val > 1000000) {
+        return res.status(400).json({ error: 'Demo ETH balance must be between 0 and 1,000,000.' });
+      }
+      payload.demoEthBalance = val.toFixed(4);
+    }
+    if (req.body?.demoCtBalance !== undefined) {
+      const val = parseFloat(req.body.demoCtBalance);
+      if (!Number.isFinite(val) || val < 0 || val > 100000000) {
+        return res.status(400).json({ error: 'Demo CT balance must be between 0 and 100,000,000.' });
+      }
+      payload.demoCtBalance = val.toFixed(2);
+    }
+
+    if (Object.keys(payload).length === 0) {
+      return res.status(400).json({ error: 'At least one balance field must be provided.' });
+    }
+
+    const updated = await updateUserBalances(targetUid, payload);
+    await addAdminLog(
+      req.user!.uid,
+      'ADMIN_BALANCE_ADJUSTMENT',
+      `Admin ${req.user?.email || req.user!.uid} updated demo balances for ${existing.email || targetUid}: ${JSON.stringify(payload)}`
+    );
+    res.json({ success: true, user: updated });
+  } catch (error: any) {
+    console.error('Error adjusting user balances:', error);
+    res.status(400).json({ error: error.message || 'Failed to adjust user balances' });
+  }
+});
+
+apiRouter.get('/admin/trades', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {
+  try {
+    const tradesList = await getAllTrades(150);
+    res.json({ trades: tradesList });
+  } catch (error: any) {
+    console.error('Error listing all trades:', error);
+    res.status(500).json({ error: error.message || 'Failed to list platform trades' });
+  }
+});
+
+// Admin-only CT Trader Contract Registry (ensures all existing CT traders have a contract address assigned)
+apiRouter.get('/admin/ct-contracts', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {
+  try {
+    await backfillAllCtTraders();
+    const traders = await getCtTradersRegistry();
+    res.json({
+      traders,
+      total: traders.length,
+      masterContractAddress: CORETOKEN_SPEC.contractAddress,
+      chainId: CORETOKEN_SPEC.chain.chainId,
+      network: CORETOKEN_SPEC.chain.name,
+    });
+  } catch (error: any) {
+    console.error('Error loading CT trader contracts registry:', error);
+    res.status(500).json({ error: error.message || 'Failed to load CT trader contracts registry' });
+  }
+});
+
+apiRouter.post('/admin/campaigns', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const campaignKey = String(req.body?.campaignKey || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    const title = String(req.body?.title || '').trim();
+    const description = String(req.body?.description || '').trim();
+    const points = parseInt(String(req.body?.points || '0'), 10);
+    const ctReward = String(req.body?.ctReward || '').trim();
+    const category = String(req.body?.category || 'Trading').trim();
+    const badge = String(req.body?.badge || 'ADMIN').trim();
+
+    if (!campaignKey || !title || !description || !ctReward || !Number.isFinite(points) || points <= 0) {
+      return res.status(400).json({ error: 'Valid campaignKey, title, description, positive points, and ctReward are required.' });
+    }
+
+    const campaign = await createRewardCampaignAdmin({
+      campaignKey,
+      title,
+      description,
+      points,
+      ctReward,
+      category,
+      badge,
+    });
+
+    await addAdminLog(
+      req.user!.uid,
+      'CAMPAIGN_CREATED',
+      `Admin ${req.user?.email || req.user!.uid} created reward campaign "${title}" (${campaignKey}, +${ctReward}, +${points} PTS).`
+    );
+
+    res.json({ success: true, campaign });
+  } catch (error: any) {
+    console.error('Error creating campaign:', error);
+    res.status(400).json({ error: error.message || 'Failed to create campaign' });
+  }
+});
+
+apiRouter.patch('/admin/campaigns/:id', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: 'Invalid campaign ID.' });
+    }
+
+    const updates: any = {};
+    if (typeof req.body?.title === 'string' && req.body.title.trim()) updates.title = req.body.title.trim();
+    if (typeof req.body?.description === 'string' && req.body.description.trim()) updates.description = req.body.description.trim();
+    if (typeof req.body?.ctReward === 'string' && req.body.ctReward.trim()) updates.ctReward = req.body.ctReward.trim();
+    if (typeof req.body?.category === 'string' && req.body.category.trim()) updates.category = req.body.category.trim();
+    if (typeof req.body?.badge === 'string' && req.body.badge.trim()) updates.badge = req.body.badge.trim();
+    if (req.body?.points !== undefined) {
+      const pts = parseInt(String(req.body.points), 10);
+      if (!Number.isFinite(pts) || pts <= 0) {
+        return res.status(400).json({ error: 'Points must be a positive integer.' });
+      }
+      updates.points = pts;
+    }
+
+    const campaign = await updateRewardCampaignAdmin(id, updates);
+    await addAdminLog(
+      req.user!.uid,
+      'CAMPAIGN_UPDATED',
+      `Admin ${req.user?.email || req.user!.uid} updated campaign #${id} (${campaign.title}).`
+    );
+    res.json({ success: true, campaign });
+  } catch (error: any) {
+    console.error('Error updating campaign:', error);
+    res.status(400).json({ error: error.message || 'Failed to update campaign' });
+  }
+});
+
+apiRouter.delete('/admin/campaigns/:id', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: 'Invalid campaign ID.' });
+    }
+
+    const deleted = await deleteRewardCampaignAdmin(id);
+    await addAdminLog(
+      req.user!.uid,
+      'CAMPAIGN_DELETED',
+      `Admin ${req.user?.email || req.user!.uid} deleted campaign "${deleted.title}" (#${id}).`
+    );
+    res.json({ success: true, campaign: deleted });
+  } catch (error: any) {
+    console.error('Error deleting campaign:', error);
+    res.status(400).json({ error: error.message || 'Failed to delete campaign' });
+  }
+});
+
+apiRouter.get('/admin/logs', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {
+  try {
+    const logs = await getAdminLogsList(100);
     res.json({ logs });
   } catch (error: any) {
     console.error('Error listing admin logs:', error);
     res.status(500).json({ error: error.message || 'Failed to list admin logs' });
+  }
+});
+
+// Public platform operational status (used to synchronize Maintenance Mode across clients)
+apiRouter.get('/platform/status', async (_req, res) => {
+  try {
+    const status = await getPlatformMaintenanceState();
+    res.json(status);
+  } catch (error: any) {
+    console.error('Error reading platform status:', error);
+    res.status(500).json({ error: error.message || 'Failed to read platform status' });
+  }
+});
+
+// Admin-only Global Maintenance Mode toggle
+apiRouter.patch('/admin/maintenance', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { enabled, message } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'Boolean "enabled" flag is required.' });
+    }
+
+    const actor = req.user?.email || req.user!.uid;
+    const updated = await setPlatformMaintenanceState({
+      enabled,
+      message: typeof message === 'string' ? message : undefined,
+      updatedBy: actor,
+    });
+
+    await addAdminLog(
+      req.user!.uid,
+      enabled ? 'MAINTENANCE_MODE_ENABLED' : 'MAINTENANCE_MODE_DISABLED',
+      `Admin ${actor} ${enabled ? 'ENABLED' : 'DISABLED'} global Maintenance Mode. Notice: "${updated.maintenanceMessage}"`
+    );
+
+    res.json({ success: true, ...updated });
+  } catch (error: any) {
+    console.error('Error updating maintenance mode:', error);
+    res.status(500).json({ error: error.message || 'Failed to update maintenance mode' });
   }
 });
 
@@ -1143,6 +1516,279 @@ Generate scores (0-100) and concise catalysts for BTC/USDT, ETH/USDT, CT/USDT (C
     res.json(fallbackPayload);
   }
 });
+
+// Per-asset Trading Terminal Sentiment Analysis cache (3-minute TTL)
+const assetSentimentCache: Record<string, { timestamp: number; data: any }> = {};
+const ASSET_SENTIMENT_TTL_MS = 3 * 60 * 1000;
+
+function clampScore(value: unknown, fallback = 50): number {
+  const num = typeof value === 'number' && Number.isFinite(value) ? value : Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(num)));
+}
+
+function classifyScore(score: number): string {
+  if (score < 25) return 'Extreme Fear';
+  if (score < 45) return 'Bearish';
+  if (score < 56) return 'Neutral';
+  if (score < 76) return 'Bullish';
+  return 'Extreme Greed';
+}
+
+apiRouter.get('/asset-sentiment', async (req, res) => {
+  const rawSymbol = typeof req.query.symbol === 'string' ? req.query.symbol.trim() : '';
+  const symbol = rawSymbol || 'BTC/USDT';
+  const forceRefresh = req.query.refresh === 'true';
+  const cacheKey = symbol.toUpperCase();
+
+  if (
+    !forceRefresh &&
+    assetSentimentCache[cacheKey] &&
+    Date.now() - assetSentimentCache[cacheKey].timestamp < ASSET_SENTIMENT_TTL_MS
+  ) {
+    return res.json({ ...assetSentimentCache[cacheKey].data, cached: true });
+  }
+
+  const ai = getGeminiClient();
+  if (!ai) {
+    return res.status(503).json({
+      error: 'Gemini API key is not configured on the server. Please configure GEMINI_API_KEY in Settings > Secrets.',
+      code: 'GEMINI_KEY_MISSING',
+    });
+  }
+
+  const knownMarket = INITIAL_MARKETS[symbol] || INITIAL_MARKETS[cacheKey];
+  const queryPrice = Number(req.query.price);
+  const queryChange = Number(req.query.change24h);
+  const assetName = knownMarket?.name || (typeof req.query.name === 'string' && req.query.name.trim()) || symbol.split('/')[0];
+  const category = knownMarket?.category || 'crypto';
+  const livePrice = Number.isFinite(queryPrice) && queryPrice > 0 ? queryPrice : knownMarket?.price ?? 100;
+  const change24h = Number.isFinite(queryChange) ? queryChange : knownMarket?.change24h ?? 0;
+  const high24h = knownMarket?.high24h ?? livePrice * 1.03;
+  const low24h = knownMarket?.low24h ?? livePrice * 0.97;
+  const volume24h = knownMarket?.volume24h ?? 50000000;
+  const marketCap = knownMarket?.marketCap ?? 1000000000;
+  const rangeSpan = Math.max(high24h - low24h, 1e-9);
+  const rangePositionPct = Math.max(0, Math.min(100, ((livePrice - low24h) / rangeSpan) * 100));
+  const sparkline = knownMarket?.sparkline || [low24h, livePrice];
+
+  const baseTicker = symbol.split('/')[0].toUpperCase();
+  const cachedNewsPool = [
+    ...(newsCache['all']?.data?.articles || []),
+    ...(newsCache[category === 'stock' ? 'stock' : 'crypto']?.data?.articles || []),
+  ];
+  const matchingHeadlines = cachedNewsPool
+    .filter((art: any) => {
+      const syms = Array.isArray(art.relatedSymbols) ? art.relatedSymbols.map((s: string) => s.toUpperCase()) : [];
+      const text = `${art.title || ''} ${art.summary || ''}`.toUpperCase();
+      return syms.includes(baseTicker) || text.includes(baseTicker) || text.includes(assetName.toUpperCase());
+    })
+    .slice(0, 4);
+  const generalHeadlines = (cachedNewsPool.length > 0 ? cachedNewsPool : getFallbackNews(category === 'stock' ? 'stock' : 'all')).slice(0, 4);
+  const relevantHeadlines = (matchingHeadlines.length > 0 ? matchingHeadlines : generalHeadlines)
+    .map((a: any) => `- [${String(a.sentiment || 'neutral').toUpperCase()}] ${a.title}`)
+    .join('\n');
+
+  const prompt = `Analyze current social media chatter, community momentum, and institutional market trends for the selected Trading Terminal asset.
+
+SELECTED ASSET TELEMETRY:
+- Symbol: ${symbol} (${assetName})
+- Asset Class: ${category}
+- Live Mark Price: $${livePrice}
+- 24h Change: ${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%
+- 24h High / Low: $${high24h} / $${low24h} (Price at ${rangePositionPct.toFixed(1)}% of 24h range)
+- 24h Volume: $${volume24h.toLocaleString()}
+- Market Cap: $${marketCap.toLocaleString()}
+- Intraday Trajectory Samples: ${sparkline.join(' -> ')}
+
+RECENT MARKET & NEWS CONTEXT:
+${relevantHeadlines || '- Active cross-market institutional liquidity rotation.'}
+
+Evaluate:
+1. overallScore (0-100): Composite sentiment gauge (0 = Extreme Fear, 50 = Neutral, 100 = Extreme Greed).
+2. sentimentLabel: Short classification ("Extreme Fear", "Bearish", "Neutral", "Bullish", or "Extreme Greed").
+3. tradingBias: Short tactical stance ("Strong Sell", "Cautious", "Neutral", "Accumulate", or "Strong Buy").
+4. confidence (0-100): Signal confidence percentage.
+5. socialScore (0-100): Social media sentiment across X/Twitter, Reddit, Telegram/Discord, or StockTwits for ${baseTicker}.
+6. marketTrendScore (0-100): Market trend, order flow, volume velocity, and institutional positioning strength.
+7. technicalScore (0-100): Price structure, range positioning, and short-term momentum.
+8. socialVelocity: Concise 2-5 word descriptor (e.g., "Surging Mention Volume", "Elevated Retail Chatter", "Steady Institutional Flow").
+9. retailVsInstitutional: Concise 3-6 word descriptor of flow dominance.
+10. summary: 2 sharp sentences synthesizing social media narratives and market trend dynamics for ${symbol}.
+11. bullishDrivers: 2 to 3 concise bullish catalysts or social themes.
+12. bearishRisks: 2 to 3 concise downside risks or caution signals.
+13. trendingTopics: 3 to 4 short hashtag/topic strings (e.g., "#${baseTicker}", "SpotLiquidity", "BreakoutWatch").`;
+
+  const modelName = 'gemini-4-hydrogen';
+  const maxAttempts = 2;
+  let lastError: any = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: prompt,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          systemInstruction:
+            'You are the Quantitative Sentiment & Social Intelligence Engine for WORLCORE TRADE. Analyze the provided asset telemetry and news context and return strictly valid JSON matching the schema.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              overallScore: { type: Type.NUMBER },
+              sentimentLabel: { type: Type.STRING },
+              tradingBias: { type: Type.STRING },
+              confidence: { type: Type.NUMBER },
+              socialScore: { type: Type.NUMBER },
+              marketTrendScore: { type: Type.NUMBER },
+              technicalScore: { type: Type.NUMBER },
+              socialVelocity: { type: Type.STRING },
+              retailVsInstitutional: { type: Type.STRING },
+              summary: { type: Type.STRING },
+              bullishDrivers: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              bearishRisks: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              trendingTopics: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+            required: [
+              'overallScore',
+              'sentimentLabel',
+              'tradingBias',
+              'confidence',
+              'socialScore',
+              'marketTrendScore',
+              'technicalScore',
+              'socialVelocity',
+              'retailVsInstitutional',
+              'summary',
+              'bullishDrivers',
+              'bearishRisks',
+              'trendingTopics',
+            ],
+          },
+        },
+      });
+
+      const rawText = (response.text || '').trim();
+      const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+      const firstBrace = cleanJson.indexOf('{');
+      const lastBrace = cleanJson.lastIndexOf('}');
+      if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+        throw new Error('Gemini returned a non-JSON sentiment response.');
+      }
+
+      const parsed = JSON.parse(cleanJson.substring(firstBrace, lastBrace + 1));
+      const overallScore = clampScore(parsed.overallScore, 50);
+
+      const analysis = {
+        symbol,
+        assetName,
+        category,
+        overallScore,
+        sentimentLabel: parsed.sentimentLabel || classifyScore(overallScore),
+        tradingBias: parsed.tradingBias || 'Neutral',
+        confidence: clampScore(parsed.confidence, 75),
+        socialScore: clampScore(parsed.socialScore, overallScore),
+        marketTrendScore: clampScore(parsed.marketTrendScore, overallScore),
+        technicalScore: clampScore(parsed.technicalScore, overallScore),
+        socialVelocity: parsed.socialVelocity || 'Steady Social Activity',
+        retailVsInstitutional: parsed.retailVsInstitutional || 'Balanced Order Flow',
+        summary: parsed.summary || `Sentiment analysis completed for ${symbol}.`,
+        bullishDrivers: Array.isArray(parsed.bullishDrivers) ? parsed.bullishDrivers.slice(0, 3) : [],
+        bearishRisks: Array.isArray(parsed.bearishRisks) ? parsed.bearishRisks.slice(0, 3) : [],
+        trendingTopics: Array.isArray(parsed.trendingTopics) ? parsed.trendingTopics.slice(0, 4) : [`#${baseTicker}`],
+        analyzedPrice: livePrice,
+        analyzedChange24h: change24h,
+        updatedAt: new Date().toISOString(),
+        model: modelName,
+      };
+
+      const payload = { success: true, analysis };
+      assetSentimentCache[cacheKey] = {
+        timestamp: Date.now(),
+        data: payload,
+      };
+
+      return res.json({ ...payload, cached: false });
+    } catch (err: any) {
+      lastError = err;
+      const status = typeof err?.status === 'number' ? err.status : 0;
+      const msg = String(err?.message || '');
+      const isNonRetryable =
+        status === 400 ||
+        status === 401 ||
+        status === 403 ||
+        status === 404 ||
+        msg.includes('API_KEY_INVALID') ||
+        msg.includes('PERMISSION_DENIED');
+
+      if (isNonRetryable || attempt === maxAttempts) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 600 * attempt));
+    }
+  }
+
+  const errMsg = String(lastError?.message || 'Failed to analyze asset sentiment via Gemini API');
+  const rawStatus = typeof lastError?.status === 'number' ? lastError.status : 0;
+
+  if (rawStatus === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota')) {
+    return res.status(429).json({
+      error: 'Gemini API rate limit or quota reached. Please wait a moment and click Re-Analyze, or select a billing-enabled key in Settings > Secrets.',
+      code: 'RESOURCE_EXHAUSTED',
+    });
+  }
+
+  if (rawStatus === 403 || rawStatus === 400 || errMsg.includes('API_KEY_INVALID') || errMsg.includes('PERMISSION_DENIED')) {
+    return res.status(rawStatus || 400).json({
+      error: 'Gemini API authentication error. Please verify your API key in Settings > Secrets.',
+      code: 'API_KEY_ERROR',
+    });
+  }
+
+  return res.status(502).json({
+    error: errMsg,
+    code: 'GEMINI_UPSTREAM_ERROR',
+  });
+});
+
+// Paper Trading Performance Leaderboard (privacy-safe public rankings + optional current user highlight)
+apiRouter.get('/leaderboard', optionalAuth, async (req: AuthRequest, res) => {
+  try {
+    const rawSort = typeof req.query.sort === 'string' ? req.query.sort.toLowerCase() : 'return';
+    const sortBy: 'return' | 'equity' | 'volume' =
+      rawSort === 'equity' || rawSort === 'volume' ? rawSort : 'return';
+    const rawLimit = parseInt(String(req.query.limit || '25'), 10);
+    const limit = Number.isFinite(rawLimit) ? Math.max(5, Math.min(100, rawLimit)) : 25;
+
+    const ctPrice = INITIAL_MARKETS['CT/USDT']?.price || 1.84;
+    const ethPrice = INITIAL_MARKETS['ETH/USDT']?.price || 3410.8;
+
+    const result = await getLeaderboardEntries({
+      ctPrice,
+      ethPrice,
+      currentUid: req.user?.uid,
+      sortBy,
+      limit,
+    });
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Error building paper trading leaderboard:', error);
+    res.status(500).json({ error: error.message || 'Failed to load paper trading leaderboard' });
+  }
+});
+
+
 
 
 

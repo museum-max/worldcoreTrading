@@ -244,7 +244,7 @@ export const PriceAlertModal: React.FC = () => {
                           {alt.condition === 'ABOVE' ? '≥' : '≤'} ${parseFloat(alt.targetPrice).toLocaleString()}
                         </span>
                         <span
-                          className={`text-[9px] px-1.5 py-0.2 rounded uppercase font-bold ${
+                          className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-bold ${
                             alt.status === 'ACTIVE'
                               ? 'bg-sky-500/20 text-sky-400 animate-pulse'
                               : 'bg-amber-500/20 text-amber-400'

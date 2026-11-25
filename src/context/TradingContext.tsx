@@ -1,7 +1,12 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import confetti from 'canvas-confetti';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { firestoreDb } from '../lib/firebase.ts';
 import { useAuth } from './AuthContext.tsx';
 import { MarketAsset, TradeOrder, PageView, PriceAlert } from '../types/index.ts';
+
+const DEFAULT_MAINTENANCE_NOTICE =
+  'Scheduled institutional liquidity & protocol maintenance is in progress. Trading terminal access and new order execution are temporarily paused for non-admin accounts.';
 
 async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 2): Promise<Response> {
   let lastErr: unknown;
@@ -71,21 +76,49 @@ interface TradingContextType {
   clearUnreadAlerts: () => void;
   recentlyTriggeredAlert: PriceAlert | null;
   dismissTriggeredBanner: () => void;
+
+  // Global Platform Maintenance Mode
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  maintenanceUpdatedBy: string;
+  maintenanceUpdatedAt: string | null;
+  refreshPlatformStatus: () => Promise<void>;
+  setMaintenanceStateLocally: (state: {
+    maintenanceMode: boolean;
+    maintenanceMessage?: string;
+    updatedBy?: string;
+    updatedAt?: string | null;
+  }) => void;
 }
 
 const TradingContext = createContext<TradingContextType | undefined>(undefined);
 
+function getInitialPageView(): PageView {
+  if (typeof window === 'undefined') return 'home';
+  const path = window.location.pathname.toLowerCase();
+  const pageParam = new URLSearchParams(window.location.search).get('page')?.toLowerCase();
+  if (path === '/admin-login' || pageParam === 'admin-login') return 'admin-login';
+  if (path === '/admin' || pageParam === 'admin') return 'admin';
+  return 'home';
+}
+
 export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, loading: authLoading, getAuthHeader, updateBalancesLocally } = useAuth();
+  const { user, isAdmin, loading: authLoading, getAuthHeader, updateBalancesLocally, updateCtContractLocally } = useAuth();
   const [markets, setMarkets] = useState<MarketAsset[]>([]);
   const [activeSymbol, setActiveSymbol] = useState<string>('BTC/USDT');
   const [orders, setOrders] = useState<TradeOrder[]>([]);
   const [watchlist, setWatchlist] = useState<string[]>(['BTC/USDT', 'ETH/USDT', 'CT/USDT', 'NVDA/USD']);
-  const [activePage, setActivePage] = useState<PageView>('home');
+  const [activePage, setActivePage] = useState<PageView>(getInitialPageView);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [currency, setCurrency] = useState<'USD' | 'EUR' | 'GBP'>('USD');
+
+  // Global Maintenance Mode state
+  const [maintenanceMode, setMaintenanceMode] = useState<boolean>(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState<string>(DEFAULT_MAINTENANCE_NOTICE);
+  const [maintenanceUpdatedBy, setMaintenanceUpdatedBy] = useState<string>('system');
+  const [maintenanceUpdatedAt, setMaintenanceUpdatedAt] = useState<string | null>(null);
 
   // Price Alerts state
   const [alerts, setAlerts] = useState<PriceAlert[]>([]);
@@ -167,6 +200,90 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const interval = setInterval(fetchMarkets, 3500);
     return () => clearInterval(interval);
   }, [fetchMarkets]);
+
+  const setMaintenanceStateLocally = useCallback(
+    (state: {
+      maintenanceMode: boolean;
+      maintenanceMessage?: string;
+      updatedBy?: string;
+      updatedAt?: string | null;
+    }) => {
+      setMaintenanceMode(Boolean(state.maintenanceMode));
+      if (state.maintenanceMessage) {
+        setMaintenanceMessage(state.maintenanceMessage);
+      }
+      if (state.updatedBy) {
+        setMaintenanceUpdatedBy(state.updatedBy);
+      }
+      if (state.updatedAt !== undefined) {
+        setMaintenanceUpdatedAt(state.updatedAt);
+      }
+    },
+    []
+  );
+
+  // Fetch authoritative Maintenance Mode status from backend API
+  const refreshPlatformStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/platform/status');
+      if (res.ok) {
+        const data = await res.json();
+        setMaintenanceMode(Boolean(data.maintenanceMode));
+        if (typeof data.maintenanceMessage === 'string' && data.maintenanceMessage.trim()) {
+          setMaintenanceMessage(data.maintenanceMessage);
+        }
+        if (typeof data.updatedBy === 'string') {
+          setMaintenanceUpdatedBy(data.updatedBy);
+        }
+        if (typeof data.updatedAt === 'string') {
+          setMaintenanceUpdatedAt(data.updatedAt);
+        }
+      }
+    } catch (e) {
+      console.warn('Platform status check notice:', e);
+    }
+  }, []);
+
+  // Synchronize global Maintenance Mode via backend polling + Firestore real-time listener
+  useEffect(() => {
+    refreshPlatformStatus();
+    const statusInterval = setInterval(refreshPlatformStatus, 15000);
+
+    let unsubscribeFirestore: (() => void) | undefined;
+    try {
+      const globalSettingRef = doc(firestoreDb, 'platform_settings', 'global');
+      unsubscribeFirestore = onSnapshot(
+        globalSettingRef,
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            if (typeof data.maintenanceMode === 'boolean') {
+              setMaintenanceMode(data.maintenanceMode);
+            }
+            if (typeof data.maintenanceMessage === 'string' && data.maintenanceMessage.trim()) {
+              setMaintenanceMessage(data.maintenanceMessage);
+            }
+            if (typeof data.updatedBy === 'string') {
+              setMaintenanceUpdatedBy(data.updatedBy);
+            }
+            if (typeof data.updatedAt === 'string') {
+              setMaintenanceUpdatedAt(data.updatedAt);
+            }
+          }
+        },
+        (err) => {
+          console.warn('Firestore maintenance listener notice:', err.message);
+        }
+      );
+    } catch (err) {
+      console.warn('Maintenance listener init notice:', err);
+    }
+
+    return () => {
+      clearInterval(statusInterval);
+      if (unsubscribeFirestore) unsubscribeFirestore();
+    };
+  }, [refreshPlatformStatus]);
 
   // Fetch price alerts
   const fetchAlerts = useCallback(async () => {
@@ -422,6 +539,15 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     price: string;
     amount: string;
   }): Promise<boolean> => {
+    if (maintenanceMode && !isAdmin) {
+      addToast(
+        'error',
+        'Trading Suspended (Maintenance)',
+        'Platform Maintenance Mode is active. New orders are temporarily disabled for non-admin accounts.'
+      );
+      return false;
+    }
+
     try {
       const headers = await getAuthHeader();
       const res = await fetch('/api/orders', {
@@ -441,6 +567,10 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         updateBalancesLocally(data.updatedBalances);
       }
 
+      if (data.ctContractAddress) {
+        updateCtContractLocally(data.ctContractAddress);
+      }
+
       if (data.trade) {
         setOrders((prev) => [data.trade, ...prev]);
       }
@@ -457,7 +587,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       addToast(
         'success',
         `${order.side.toUpperCase()} Order Filled`,
-        `Successfully simulated ${order.amount} ${order.symbol} @ $${order.price} ($${(parseFloat(order.price) * parseFloat(order.amount)).toFixed(2)})`
+        data.ctContractNewlyAssigned && data.ctContractAddress
+          ? `Executed ${order.amount} ${order.symbol} @ $${order.price}. Assigned your CT Trader Contract: ${data.ctContractAddress.slice(0, 10)}...${data.ctContractAddress.slice(-6)}`
+          : `Successfully simulated ${order.amount} ${order.symbol} @ $${order.price} ($${(parseFloat(order.price) * parseFloat(order.amount)).toFixed(2)})`
       );
 
       return true;
@@ -558,6 +690,14 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         clearUnreadAlerts,
         recentlyTriggeredAlert,
         dismissTriggeredBanner,
+
+        // Maintenance Mode
+        maintenanceMode,
+        maintenanceMessage,
+        maintenanceUpdatedBy,
+        maintenanceUpdatedAt,
+        refreshPlatformStatus,
+        setMaintenanceStateLocally,
       }}
     >
       {children}

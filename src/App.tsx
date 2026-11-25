@@ -19,11 +19,13 @@ import { WatchlistPage } from './pages/WatchlistPage.tsx';
 import { HistoryPage } from './pages/HistoryPage.tsx';
 import { ProfilePage } from './pages/ProfilePage.tsx';
 import { AdminPage } from './pages/AdminPage.tsx';
+import { AdminLoginPage } from './pages/AdminLoginPage.tsx';
 import { SettingsPage } from './pages/SettingsPage.tsx';
 import { AboutPage } from './pages/AboutPage.tsx';
 import { AlertsPage } from './pages/AlertsPage.tsx';
 import { NftVaultPage } from './pages/NftVaultPage.tsx';
 import { CoreTokenPage } from './pages/CoreTokenPage.tsx';
+import { ReownPayPage } from './pages/ReownPayPage.tsx';
 import { PriceAlertModal } from './components/PriceAlertModal.tsx';
 import { TriggeredAlertBanner } from './components/TriggeredAlertBanner.tsx';
 
@@ -44,6 +46,8 @@ const AppContent: React.FC = () => {
         return <RewardsPage />;
       case 'token':
         return <CoreTokenPage />;
+      case 'reown-pay':
+        return <ReownPayPage />;
       case 'nfts':
         return <NftVaultPage />;
       case 'watchlist':
@@ -54,6 +58,8 @@ const AppContent: React.FC = () => {
         return <ProfilePage />;
       case 'admin':
         return <AdminPage />;
+      case 'admin-login':
+        return <AdminLoginPage />;
       case 'settings':
         return <SettingsPage />;
       case 'about':

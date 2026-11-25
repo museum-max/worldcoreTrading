@@ -6,6 +6,7 @@ export interface UserProfile {
   photoURL?: string;
   role: 'user' | 'admin';
   walletAddress?: string;
+  ctContractAddress?: string;
   demoUsdBalance: string;
   demoEthBalance: string;
   demoCtBalance: string;
@@ -37,6 +38,7 @@ export interface TradeOrder {
   total: string;
   status: 'filled' | 'open' | 'cancelled';
   pnl?: string;
+  ctContractAddress?: string;
   createdAt: string;
 }
 
@@ -84,11 +86,13 @@ export type PageView =
   | 'history'
   | 'profile'
   | 'admin'
+  | 'admin-login'
   | 'settings'
   | 'about'
   | 'alerts'
   | 'nfts'
-  | 'token';
+  | 'token'
+  | 'reown-pay';
 
 export interface NftItem {
   id: string;
@@ -127,3 +131,57 @@ export interface UserNft {
   acquiredAt: string;
   ownerAddress?: string;
 }
+
+export interface AssetSentimentAnalysis {
+  symbol: string;
+  assetName: string;
+  category: 'crypto' | 'stock' | 'ecosystem';
+  overallScore: number;
+  sentimentLabel: string;
+  tradingBias: string;
+  confidence: number;
+  socialScore: number;
+  marketTrendScore: number;
+  technicalScore: number;
+  socialVelocity: string;
+  retailVsInstitutional: string;
+  summary: string;
+  bullishDrivers: string[];
+  bearishRisks: string[];
+  trendingTopics: string[];
+  analyzedPrice: number;
+  analyzedChange24h: number;
+  updatedAt: string;
+  model: string;
+  cached?: boolean;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  traderId: string;
+  traderTag: string;
+  tierBadge: string;
+  photoURL?: string;
+  totalEquityUsd: number;
+  netPnlUsd: number;
+  returnPct: number;
+  ctHoldings: number;
+  ethHoldings: number;
+  usdHoldings: number;
+  tradeCount: number;
+  filledCount: number;
+  totalVolumeUsd: number;
+  realizedPnlUsd: number;
+  isCurrentUser: boolean;
+}
+
+export interface LeaderboardResponse {
+  leaderboard: LeaderboardEntry[];
+  currentUserEntry: LeaderboardEntry | null;
+  totalParticipants: number;
+  baselineEquityUsd: number;
+  sortBy: 'return' | 'equity' | 'volume';
+  updatedAt: string;
+}
+
+

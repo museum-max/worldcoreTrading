@@ -11,12 +11,26 @@
         "photoURL": { "type": "string", "maxLength": 1024 },
         "role": { "type": "string", "enum": ["user", "admin"] },
         "walletAddress": { "type": "string", "maxLength": 64 },
+        "ctContractAddress": { "type": "string", "maxLength": 64 },
         "demoUsdBalance": { "type": "string", "maxLength": 32 },
         "demoEthBalance": { "type": "string", "maxLength": 32 },
         "demoCtBalance": { "type": "string", "maxLength": 32 },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
       },
       "required": ["uid"]
+    },
+    "AdminGrant": {
+      "title": "AdminGrant",
+      "description": "Administrator privilege registry record controlled exclusively by verified platform admins",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 256 },
+        "grantedBy": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["uid", "grantedBy", "updatedAt"]
     },
     "Trade": {
       "title": "Trade",
@@ -32,7 +46,8 @@
         "total": { "type": "string", "maxLength": 32 },
         "status": { "type": "string", "enum": ["filled", "open", "cancelled"] },
         "pnl": { "type": "string", "maxLength": 32 },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "ctContractAddress": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 }
       },
       "required": ["userUid", "symbol", "type", "side", "price", "amount", "total", "status"]
     },
@@ -47,8 +62,8 @@
         "condition": { "type": "string", "enum": ["ABOVE", "BELOW"] },
         "status": { "type": "string", "enum": ["ACTIVE", "TRIGGERED"] },
         "note": { "type": "string", "maxLength": 256 },
-        "triggeredAt": { "type": "string", "format": "date-time" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "triggeredAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 }
       },
       "required": ["userUid", "symbol", "targetPrice", "condition", "status"]
     },
@@ -68,15 +83,47 @@
         "currency": { "type": "string", "enum": ["CT", "ETH", "USD"] },
         "txHash": { "type": "string", "maxLength": 128 },
         "ownerAddress": { "type": "string", "maxLength": 64 },
-        "acquiredAt": { "type": "string", "format": "date-time" }
+        "acquiredAt": { "type": "string", "format": "date-time", "maxLength": 64 }
       },
       "required": ["userUid", "tokenId", "name", "pricePaid", "currency"]
+    },
+    "PlatformSetting": {
+      "title": "PlatformSetting",
+      "description": "Global platform configuration including Maintenance Mode flag and notice message",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "maxLength": 64 },
+        "maintenanceMode": { "type": "boolean" },
+        "maintenanceMessage": { "type": "string", "maxLength": 500 },
+        "updatedBy": { "type": "string", "maxLength": 256 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["key", "maintenanceMode", "maintenanceMessage", "updatedBy", "updatedAt"]
+    },
+    "CtTraderContract": {
+      "title": "CtTraderContract",
+      "description": "Deterministic per-user CoreToken (CT) trading settlement contract address record",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "ctContractAddress": { "type": "string", "maxLength": 64, "pattern": "^0x[a-fA-F0-9]{40}$" },
+        "tokenContract": { "type": "string", "maxLength": 64, "pattern": "^0x[a-fA-F0-9]{40}$" },
+        "network": { "type": "string", "maxLength": 128 },
+        "chainId": { "type": "integer" },
+        "assignedAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["uid", "ctContractAddress", "tokenContract", "chainId", "updatedAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },
       "description": "User profile records containing demo balances and credentials"
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminGrant" },
+      "description": "Administrator privilege registry readable by the grantee or admins, writable strictly by verified admins"
     },
     "/trades/{tradeId}": {
       "schema": { "$ref": "#/entities/Trade" },
@@ -89,7 +136,14 @@
     "/user_nfts/{nftId}": {
       "schema": { "$ref": "#/entities/UserNft" },
       "description": "User owned WorldCore NFT collectibles and certificates"
+    },
+    "/platform_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/PlatformSetting" },
+      "description": "Global operational settings (publicly readable via get, strictly writable only by verified admins)"
+    },
+    "/ct_contracts/{contractUserId}": {
+      "schema": { "$ref": "#/entities/CtTraderContract" },
+      "description": "Per-user deterministic CoreToken (CT) trading contract address registry"
     }
   }
 }
-

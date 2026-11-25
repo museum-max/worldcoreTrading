@@ -370,7 +370,7 @@ export const NftVaultPage: React.FC = () => {
             >
               <ShieldCheck className="w-4 h-4" />
               <span>My Collected Vault</span>
-              <span className="px-1.5 py-0.2 rounded-full bg-[#1E293B] text-[#D4AF37] text-[10px]">
+              <span className="px-1.5 py-0.5 rounded-full bg-[#1E293B] text-[#D4AF37] text-[10px]">
                 {userNfts.length}
               </span>
             </button>

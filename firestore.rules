@@ -2,9 +2,17 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Default deny all unknown paths
+    // Global safety net: default deny all unknown paths
     match /{document=**} {
       allow read, write: if false;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
     }
 
     function isSignedIn() {
@@ -17,7 +25,10 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        request.auth.token.email == 'joaquineleonardo@gmail.com' ||
+        (
+          request.auth.token.email == 'joaquineleonardo@gmail.com' &&
+          request.auth.token.email_verified == true
+        ) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -26,37 +37,210 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // Users collection
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid']) &&
+        data.keys().hasOnly([
+          'uid',
+          'email',
+          'displayName',
+          'photoURL',
+          'role',
+          'walletAddress',
+          'ctContractAddress',
+          'demoUsdBalance',
+          'demoEthBalance',
+          'demoCtBalance',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 256)) &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+        (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024)) &&
+        (!('role' in data) || (data.role in ['user', 'admin'])) &&
+        (!('walletAddress' in data) || (data.walletAddress is string && data.walletAddress.size() <= 64)) &&
+        (!('ctContractAddress' in data) || (data.ctContractAddress is string && data.ctContractAddress.size() <= 64)) &&
+        (!('demoUsdBalance' in data) || (data.demoUsdBalance is string && data.demoUsdBalance.size() <= 32)) &&
+        (!('demoEthBalance' in data) || (data.demoEthBalance is string && data.demoEthBalance.size() <= 32)) &&
+        (!('demoCtBalance' in data) || (data.demoCtBalance is string && data.demoCtBalance.size() <= 32)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidAdminGrant(data) {
+      return data.keys().hasAll(['uid', 'grantedBy', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'grantedBy', 'updatedAt']) &&
+        data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 &&
+        data.grantedBy is string && data.grantedBy.size() > 0 && data.grantedBy.size() <= 128 &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64 &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 256));
+    }
+
+    function isValidTrade(data) {
+      return data.keys().hasAll(['userUid', 'symbol', 'type', 'side', 'price', 'amount', 'total', 'status']) &&
+        data.keys().hasOnly(['userUid', 'symbol', 'type', 'side', 'price', 'amount', 'total', 'status', 'pnl', 'ctContractAddress', 'createdAt']) &&
+        data.userUid is string && data.userUid.size() > 0 && data.userUid.size() <= 128 &&
+        data.symbol is string && data.symbol.size() > 0 && data.symbol.size() <= 32 &&
+        data.type in ['market', 'limit'] &&
+        data.side in ['buy', 'sell'] &&
+        data.price is string && data.price.size() <= 32 &&
+        data.amount is string && data.amount.size() <= 32 &&
+        data.total is string && data.total.size() <= 32 &&
+        data.status in ['filled', 'open', 'cancelled'] &&
+        (!('pnl' in data) || (data.pnl is string && data.pnl.size() <= 32)) &&
+        (!('ctContractAddress' in data) || (data.ctContractAddress is string && data.ctContractAddress.size() <= 64)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64));
+    }
+
+    function isValidPriceAlert(data) {
+      return data.keys().hasAll(['userUid', 'symbol', 'targetPrice', 'condition', 'status']) &&
+        data.keys().hasOnly(['userUid', 'symbol', 'targetPrice', 'condition', 'status', 'note', 'triggeredAt', 'createdAt']) &&
+        data.userUid is string && data.userUid.size() > 0 && data.userUid.size() <= 128 &&
+        data.symbol is string && data.symbol.size() > 0 && data.symbol.size() <= 32 &&
+        data.targetPrice is string && data.targetPrice.size() <= 32 &&
+        data.condition in ['ABOVE', 'BELOW'] &&
+        data.status in ['ACTIVE', 'TRIGGERED'] &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 256)) &&
+        (!('triggeredAt' in data) || (data.triggeredAt is string && data.triggeredAt.size() <= 64)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64));
+    }
+
+    function isValidUserNft(data) {
+      return data.keys().hasAll(['userUid', 'tokenId', 'name', 'pricePaid', 'currency']) &&
+        data.keys().hasOnly([
+          'userUid', 'tokenId', 'name', 'edition', 'collection', 'image',
+          'rarity', 'pricePaid', 'currency', 'txHash', 'ownerAddress', 'acquiredAt'
+        ]) &&
+        data.userUid is string && data.userUid.size() > 0 && data.userUid.size() <= 128 &&
+        data.tokenId is string && data.tokenId.size() <= 64 &&
+        data.name is string && data.name.size() <= 128 &&
+        data.pricePaid is string && data.pricePaid.size() <= 64 &&
+        data.currency in ['CT', 'ETH', 'USD'] &&
+        (!('edition' in data) || (data.edition is string && data.edition.size() <= 64)) &&
+        (!('collection' in data) || (data.collection is string && data.collection.size() <= 128)) &&
+        (!('image' in data) || (data.image is string && data.image.size() <= 1024)) &&
+        (!('rarity' in data) || (data.rarity is string && data.rarity.size() <= 64)) &&
+        (!('txHash' in data) || (data.txHash is string && data.txHash.size() <= 128)) &&
+        (!('ownerAddress' in data) || (data.ownerAddress is string && data.ownerAddress.size() <= 64)) &&
+        (!('acquiredAt' in data) || (data.acquiredAt is string && data.acquiredAt.size() <= 64));
+    }
+
+    function isValidPlatformSetting(data) {
+      return data.keys().hasAll(['key', 'maintenanceMode', 'maintenanceMessage', 'updatedBy', 'updatedAt']) &&
+        data.keys().hasOnly(['key', 'maintenanceMode', 'maintenanceMessage', 'updatedBy', 'updatedAt']) &&
+        data.key is string && data.key.size() > 0 && data.key.size() <= 64 &&
+        data.maintenanceMode is bool &&
+        data.maintenanceMessage is string && data.maintenanceMessage.size() <= 500 &&
+        data.updatedBy is string && data.updatedBy.size() > 0 && data.updatedBy.size() <= 256 &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64;
+    }
+
+    function isValidCtContract(data) {
+      return data.keys().hasAll(['uid', 'ctContractAddress', 'tokenContract', 'chainId', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'ctContractAddress', 'tokenContract', 'network', 'chainId', 'assignedAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 &&
+        data.ctContractAddress is string && data.ctContractAddress.size() <= 64 && data.ctContractAddress.matches('^0x[a-fA-F0-9]{40}$') &&
+        data.tokenContract is string && data.tokenContract.size() <= 64 && data.tokenContract.matches('^0x[a-fA-F0-9]{40}$') &&
+        data.chainId is int &&
+        (!('network' in data) || (data.network is string && data.network.size() <= 128)) &&
+        (!('assignedAt' in data) || (data.assignedAt is string && data.assignedAt.size() <= 64)) &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64;
+    }
+
+    // Users collection (PII isolated to owner & admin; non-admins blocked from escalating role)
     match /users/{userId} {
-      allow get: if isOwner(userId) || isAdmin();
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
-      allow create, update: if isOwner(userId) || isAdmin();
-      allow delete: if isAdmin();
+      allow create: if isValidId(userId) &&
+        isValidUser(incoming()) &&
+        incoming().uid == userId &&
+        (
+          isAdmin() ||
+          (isOwner(userId) && (!('role' in incoming()) || incoming().role == 'user'))
+        );
+      allow update: if isValidId(userId) &&
+        isValidUser(incoming()) &&
+        incoming().uid == existing().uid &&
+        (
+          isAdmin() ||
+          (isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role']))
+        );
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // Administrator privilege registry (strictly admin-only management)
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isValidId(adminId) &&
+        isAdmin() &&
+        isValidAdminGrant(incoming()) &&
+        incoming().uid == adminId;
+      allow delete: if isValidId(adminId) && isAdmin() && adminId != request.auth.uid;
     }
 
     // Paper Trades collection
     match /trades/{tradeId} {
-      allow get: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && request.resource.data.userUid == request.auth.uid;
-      allow update, delete: if isAdmin();
+      allow get: if isValidId(tradeId) && isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
+      allow create: if isValidId(tradeId) && isSignedIn() && isValidTrade(incoming()) && incoming().userUid == request.auth.uid;
+      allow update: if isValidId(tradeId) && isValidTrade(incoming()) && isAdmin();
+      allow delete: if isValidId(tradeId) && isAdmin();
     }
 
     // Price Alerts collection
     match /priceAlerts/{alertId} {
-      allow get: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && request.resource.data.userUid == request.auth.uid;
-      allow update, delete: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow get: if isValidId(alertId) && isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
+      allow create: if isValidId(alertId) && isSignedIn() && isValidPriceAlert(incoming()) && incoming().userUid == request.auth.uid;
+      allow update: if isValidId(alertId) &&
+        isSignedIn() &&
+        isValidPriceAlert(incoming()) &&
+        incoming().userUid == existing().userUid &&
+        (existing().userUid == request.auth.uid || isAdmin());
+      allow delete: if isValidId(alertId) && isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
     }
 
     // User NFTs collection
     match /user_nfts/{nftId} {
-      allow get: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && request.resource.data.userUid == request.auth.uid;
-      allow update, delete: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow get: if isValidId(nftId) && isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
+      allow create: if isValidId(nftId) && isSignedIn() && isValidUserNft(incoming()) && incoming().userUid == request.auth.uid;
+      allow update: if isValidId(nftId) &&
+        isSignedIn() &&
+        isValidUserNft(incoming()) &&
+        incoming().userUid == existing().userUid &&
+        (existing().userUid == request.auth.uid || isAdmin());
+      allow delete: if isValidId(nftId) && isSignedIn() && (existing().userUid == request.auth.uid || isAdmin());
+    }
+
+    // Global Platform Settings (get allowed for real-time maintenance lock sync; writes strictly admin-only)
+    match /platform_settings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if false;
+      allow create, update: if isValidId(settingId) &&
+        isAdmin() &&
+        isValidPlatformSetting(incoming()) &&
+        incoming().key == settingId;
+      allow delete: if isValidId(settingId) && isAdmin();
+    }
+
+    // Per-user deterministic CoreToken (CT) trading contract addresses
+    match /ct_contracts/{contractUserId} {
+      allow get: if isValidId(contractUserId) && (isOwner(contractUserId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(contractUserId) &&
+        isSignedIn() &&
+        isValidCtContract(incoming()) &&
+        incoming().uid == contractUserId &&
+        (isOwner(contractUserId) || isAdmin());
+      allow update: if isValidId(contractUserId) &&
+        isSignedIn() &&
+        isValidCtContract(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().ctContractAddress == existing().ctContractAddress &&
+        (isOwner(contractUserId) || isAdmin());
+      allow delete: if isValidId(contractUserId) && isAdmin();
     }
   }
 }
-

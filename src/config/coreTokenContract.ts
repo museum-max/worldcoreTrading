@@ -30,7 +30,7 @@ export const CORETOKEN_SPEC = {
   name: 'CoreToken',
   symbol: 'CT',
   decimals: 18,
-  standard: 'ERC-20 (OpenZeppelin v5 + EIP-2612 Permit)',
+  standard: 'ERC-20 (OpenZeppelin v5.5.0 • Fixed Supply)',
   // Valid EIP-55 checksummed contract address staged for Ethereum Sepolia Testnet
   contractAddress: '0xc07E97021A8F4B2b8D1c63e4f8A91D52e7B3a901',
   treasuryAddress: '0x71C8F79963503D002778A699b0cE433c2C5349A2',
@@ -93,6 +93,11 @@ export const CORETOKEN_SPEC = {
 };
 
 export const CORETOKEN_ERC20_ABI = [
+  {
+    inputs: [{ internalType: 'address', name: 'treasury', type: 'address' }],
+    stateMutability: 'nonpayable',
+    type: 'constructor',
+  },
   {
     inputs: [],
     name: 'name',
@@ -166,9 +171,13 @@ export const CORETOKEN_ERC20_ABI = [
     type: 'function',
   },
   {
-    inputs: [{ internalType: 'uint256', name: 'value', type: 'uint256' }],
-    name: 'burn',
-    outputs: [],
+    inputs: [
+      { internalType: 'address', name: 'from', type: 'address' },
+      { internalType: 'address', name: 'to', type: 'address' },
+      { internalType: 'uint256', name: 'value', type: 'uint256' },
+    ],
+    name: 'transferFrom',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
     stateMutability: 'nonpayable',
     type: 'function',
   },
@@ -195,53 +204,28 @@ export const CORETOKEN_ERC20_ABI = [
 ] as const;
 
 export const CORETOKEN_SOLIDITY_SOURCE = `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
- * @title CoreToken (CT)
- * @notice Ecosystem utility token for WORLCORE TRADE & EtherPulse.
- * @dev Prepared for Ethereum Sepolia Testnet (Chain ID: 11155111).
+ * CoreToken (CT)
+ * EtherPulse ecosystem utility token.
+ *
+ * Fixed supply: 100,000,000 CT
+ * Minting: Disabled
+ * Burning: Disabled
+ * Administrative privileges: None
  */
-contract CoreToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
+contract CoreToken is ERC20 {
     uint256 public constant MAX_SUPPLY = 100_000_000 * 10 ** 18;
-    uint256 public constant INITIAL_GENESIS_ALLOCATION = 18_450_000 * 10 ** 18;
 
-    address public rewardsTreasury;
+    constructor(address treasury) ERC20("CoreToken", "CT") {
+        require(treasury != address(0), "CoreToken: zero treasury address");
 
-    event RewardsTreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
-    event EcosystemRewardMinted(address indexed recipient, uint256 amount, string campaignKey);
-
-    constructor(address initialOwner, address initialTreasury)
-        ERC20("CoreToken", "CT")
-        ERC20Permit("CoreToken")
-        Ownable(initialOwner)
-    {
-        require(initialTreasury != address(0), "CoreToken: zero treasury address");
-        rewardsTreasury = initialTreasury;
-        _mint(initialTreasury, INITIAL_GENESIS_ALLOCATION);
-    }
-
-    function setRewardsTreasury(address newTreasury) external onlyOwner {
-        require(newTreasury != address(0), "CoreToken: zero treasury address");
-        address oldTreasury = rewardsTreasury;
-        rewardsTreasury = newTreasury;
-        emit RewardsTreasuryUpdated(oldTreasury, newTreasury);
-    }
-
-    function mintRewardAllocation(
-        address recipient,
-        uint256 amount,
-        string calldata campaignKey
-    ) external onlyOwner {
-        require(recipient != address(0), "CoreToken: zero recipient");
-        require(totalSupply() + amount <= MAX_SUPPLY, "CoreToken: max supply exceeded");
-        _mint(recipient, amount);
-        emit EcosystemRewardMinted(recipient, amount, campaignKey);
+        // Initial supply is minted exactly once.
+        // The designated multisig treasury receives all CT.
+        _mint(treasury, MAX_SUPPLY);
     }
 }`;
 

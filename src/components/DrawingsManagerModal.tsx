@@ -275,7 +275,7 @@ export const DrawingsManagerModal: React.FC<DrawingsManagerModalProps> = ({
                               {drawing.label || drawing.type}
                             </span>
                             <span
-                              className="text-[10px] px-1.5 py-0.2 rounded font-mono uppercase"
+                              className="text-[10px] px-1.5 py-0.5 rounded font-mono uppercase"
                               style={{
                                 color: drawing.color,
                                 backgroundColor: `${drawing.color}15`,

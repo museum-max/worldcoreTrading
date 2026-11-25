@@ -244,7 +244,7 @@ export const MarketSentimentWidget: React.FC = () => {
                       <div className="flex items-center justify-between mb-1.5">
                         <div className="flex items-center gap-2">
                           <span className="text-white font-semibold">{factor.name}</span>
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/5 text-gray-400">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-gray-400">
                             {factor.weight} weight
                           </span>
                         </div>

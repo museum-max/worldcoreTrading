@@ -30,7 +30,7 @@ export const TriggeredAlertBanner: React.FC = () => {
                 🎯 PRICE TARGET TRIGGERED:
               </span>
               <span className="font-extrabold text-white">{recentlyTriggeredAlert.symbol}</span>
-              <span className="px-2 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+              <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
                 ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: currentPrice < 10 ? 4 : 2 })}
               </span>
             </div>

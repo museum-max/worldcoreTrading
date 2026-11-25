@@ -21,7 +21,7 @@ export const ReownWalletConnectCard: React.FC<ReownWalletConnectCardProps> = ({
   variant = 'full',
   className = '',
 }) => {
-  const { addToast } = useTrading();
+  const { addToast, setActivePage } = useTrading();
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copiedField, setCopiedField] = useState<'url' | 'pid' | null>(null);
   const [showCompactQr, setShowCompactQr] = useState<boolean>(false);
@@ -81,6 +81,14 @@ export const ReownWalletConnectCard: React.FC<ReownWalletConnectCardProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setActivePage('reown-pay')}
+              className="px-2.5 py-1.5 bg-[#141C2C] hover:bg-[#1E283D] border border-sky-500/35 text-sky-300 rounded-lg flex items-center gap-1.5 transition-colors"
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              <span>Reown Pay Page</span>
+            </button>
             <button
               type="button"
               onClick={() => setShowCompactQr((prev) => !prev)}
@@ -258,6 +266,14 @@ export const ReownWalletConnectCard: React.FC<ReownWalletConnectCardProps> = ({
               <span>Launch Reown WalletConnect Pay</span>
               <ExternalLink className="w-4 h-4" />
             </a>
+            <button
+              type="button"
+              onClick={() => setActivePage('reown-pay')}
+              className="py-3 px-4 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-300 font-bold rounded-xl flex items-center gap-2 transition-colors"
+            >
+              <QrCode className="w-4 h-4" />
+              <span>Open Reown Pay Page</span>
+            </button>
             <button
               type="button"
               onClick={() =>

@@ -1211,7 +1211,7 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({ market }) =>
           >
             <Layers className="w-3.5 h-3.5 text-[#D4AF37]" />
             <span className="text-[11px]">Manage</span>
-            <span className="px-1.5 py-0.2 rounded-full bg-[#1E293B] text-[#D4AF37] text-[10px] font-bold">
+            <span className="px-1.5 py-0.5 rounded-full bg-[#1E293B] text-[#D4AF37] text-[10px] font-bold">
               {drawings.length}
             </span>
           </button>

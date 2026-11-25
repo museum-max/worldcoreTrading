@@ -8,8 +8,8 @@ import {
   updateProfile,
   User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { auth, googleAuthProvider, firestoreDb } from '../lib/firebase.ts';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { auth, googleAuthProvider, firestoreDb, OperationType, handleFirestoreError } from '../lib/firebase.ts';
 import { UserProfile } from '../types/index.ts';
 
 async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 2): Promise<Response> {
@@ -38,6 +38,9 @@ interface AuthContextType {
   firebaseUser: FirebaseUser | null;
   web3Account: Web3Account | null;
   loading: boolean;
+  isAdmin: boolean;
+  adminVerified: boolean;
+  verifyAdminSession: () => Promise<boolean>;
   loginWithGoogle: () => Promise<void>;
   registerWithEmail: (email: string, password: string, displayName?: string) => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
@@ -48,6 +51,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   updateBalancesLocally: (balances: { demoUsdBalance?: string; demoEthBalance?: string; demoCtBalance?: string }) => void;
+  updateCtContractLocally: (ctContractAddress: string) => void;
   getAuthHeader: () => Promise<Record<string, string>>;
 }
 
@@ -65,6 +69,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [adminVerified, setAdminVerified] = useState<boolean>(false);
+
+  const verifyAdminSession = useCallback(async (): Promise<boolean> => {
+    const fbUser = auth.currentUser;
+    if (!fbUser) {
+      setAdminVerified(false);
+      return false;
+    }
+    try {
+      const token = await fbUser.getIdToken();
+      const res = await fetchWithRetry('/api/admin/session', {
+        headers: { Authorization: `Bearer ${token}` },
+      }, 1);
+      if (res.ok) {
+        const data = await res.json();
+        const ok = Boolean(data?.isAdmin);
+        setAdminVerified(ok);
+        return ok;
+      }
+      setAdminVerified(false);
+      return false;
+    } catch {
+      setAdminVerified(false);
+      return false;
+    }
+  }, []);
 
   // Helper to sync user profile across Cloud SQL and (when Firebase-signed-in) Cloud Firestore
   const syncAndFetchUser = useCallback(async (
@@ -97,7 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // 2. Fetch fresh profile from backend to guarantee authoritative Cloud SQL balances
+      // 2. Fetch fresh profile from backend to guarantee authoritative Cloud SQL balances & role
       const res = await fetchWithRetry('/api/user/profile', { headers });
       if (res.ok) {
         const data = await res.json();
@@ -112,39 +142,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // 3. Realtime sync to Cloud Firestore only when an authenticated Firebase user owns this document
       if (auth.currentUser && auth.currentUser.uid === uid) {
+        const path = `users/${uid}`;
+        const nowIso = new Date().toISOString();
         try {
           const userDocRef = doc(firestoreDb, 'users', uid);
-          await setDoc(
-            userDocRef,
-            {
-              uid,
-              email: syncedUser?.email || email || '',
-              displayName:
-                syncedUser?.displayName ||
-                name ||
-                (wallet ? `Trader ${wallet.slice(0, 6)}` : 'Institutional Trader'),
-              photoURL: syncedUser?.photoURL || photo || '',
-              walletAddress: syncedUser?.walletAddress || wallet || '',
-              role: syncedUser?.role || (email === 'joaquineleonardo@gmail.com' ? 'admin' : 'user'),
-              demoUsdBalance: syncedUser?.demoUsdBalance || '100000.00',
-              demoEthBalance: syncedUser?.demoEthBalance || '10.00',
-              demoCtBalance: syncedUser?.demoCtBalance || '25000.00',
-              updatedAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
+          const existingSnap = await getDoc(userDocRef);
+          const basePayload: Record<string, string> = {
+            uid,
+            email: syncedUser?.email || email || '',
+            displayName:
+              syncedUser?.displayName ||
+              name ||
+              (wallet ? `Trader ${wallet.slice(0, 6)}` : 'Institutional Trader'),
+            photoURL: syncedUser?.photoURL || photo || '',
+            walletAddress: syncedUser?.walletAddress || wallet || '',
+            demoUsdBalance: syncedUser?.demoUsdBalance || '100000.00',
+            demoEthBalance: syncedUser?.demoEthBalance || '10.00',
+            demoCtBalance: syncedUser?.demoCtBalance || '25000.00',
+            updatedAt: nowIso,
+          };
+          if (syncedUser?.ctContractAddress) {
+            basePayload.ctContractAddress = syncedUser.ctContractAddress;
+          }
+          if (!existingSnap.exists()) {
+            basePayload.role =
+              syncedUser?.role === 'admin' && auth.currentUser.email?.toLowerCase() === 'joaquineleonardo@gmail.com'
+                ? 'admin'
+                : 'user';
+          }
+          await setDoc(userDocRef, basePayload, { merge: true });
+
+          if (syncedUser?.ctContractAddress && /^0x[0-9a-fA-F]{40}$/.test(syncedUser.ctContractAddress)) {
+            const contractDocRef = doc(firestoreDb, 'ct_contracts', uid);
+            await setDoc(
+              contractDocRef,
+              {
+                uid,
+                ctContractAddress: syncedUser.ctContractAddress,
+                tokenContract: '0xc07E97021A8F4B2b8D1c63e4f8A91D52e7B3a901',
+                network: 'Ethereum Sepolia Testnet (Staged)',
+                chainId: 11155111,
+                assignedAt: nowIso,
+                updatedAt: nowIso,
+              },
+              { merge: true }
+            );
+          }
         } catch (firestoreErr) {
-          console.warn('Firestore user document sync notice:', firestoreErr);
+          try {
+            handleFirestoreError(firestoreErr, OperationType.WRITE, path);
+          } catch {
+            console.warn('Firestore user document sync notice:', firestoreErr);
+          }
         }
       }
     } catch (err) {
       console.warn('Profile sync fallback active (network unavailable):', err instanceof Error ? err.message : err);
-      // Fallback guest profile in memory if offline
+      // Fallback guest profile in memory if offline (never elevate to admin offline)
       setUser((prev) => prev || {
         uid,
         email: email || '',
         displayName: name || 'Demo Institutional Trader',
-        role: email === 'joaquineleonardo@gmail.com' ? 'admin' : 'user',
+        role: 'user',
         walletAddress: wallet,
         demoUsdBalance: '100000.00',
         demoEthBalance: '10.00',
@@ -185,21 +244,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             web3Account?.address,
             { Authorization: `Bearer ${token}` }
           );
+          await verifyAdminSession();
         } catch (e) {
           console.warn('Deferred user sync after auth state changed:', e);
         }
-      } else if (!web3Account) {
-        // Automatically provide demo trader profile for instant preview access
-        const guestUid = 'demo_trader_genesis';
-        await syncAndFetchUser(guestUid, 'demo@worlcore.trade', 'Institutional Guest', '', undefined, {
-          Authorization: 'Web3 0x000000000000000000000000000000000000demo:demo',
-        });
+      } else {
+        setAdminVerified(false);
+        if (!web3Account) {
+          // Automatically provide demo trader profile for instant preview access
+          const guestUid = 'demo_trader_genesis';
+          await syncAndFetchUser(guestUid, 'demo@worlcore.trade', 'Institutional Guest', '', undefined, {
+            Authorization: 'Web3 0x000000000000000000000000000000000000demo:demo',
+          });
+        }
       }
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [web3Account]);
+  }, [web3Account, syncAndFetchUser, verifyAdminSession]);
 
   // Real-time Firestore Document Listener only for authenticated Firebase user
   useEffect(() => {
@@ -246,6 +309,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         web3Account?.address,
         { Authorization: `Bearer ${token}` }
       );
+      await verifyAdminSession();
     } catch (err: any) {
       console.error('Google Sign-in/Register failed:', err);
       throw err;
@@ -293,6 +357,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         web3Account?.address,
         { Authorization: `Bearer ${token}` }
       );
+      await verifyAdminSession();
     } catch (err: any) {
       console.error('Email Sign-in failed:', err);
       throw err;
@@ -433,6 +498,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await fbSignOut(auth);
       setFirebaseUser(null);
+      setAdminVerified(false);
       disconnectWallet();
     } catch (err) {
       console.error('Logout error:', err);
@@ -465,12 +531,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
+  const updateCtContractLocally = useCallback((ctContractAddress: string) => {
+    if (!ctContractAddress || !/^0x[0-9a-fA-F]{40}$/.test(ctContractAddress)) return;
+    setUser((prev) => (prev ? { ...prev, ctContractAddress } : prev));
+    const currentFbUser = auth.currentUser;
+    if (currentFbUser) {
+      const nowIso = new Date().toISOString();
+      setDoc(
+        doc(firestoreDb, 'users', currentFbUser.uid),
+        { uid: currentFbUser.uid, ctContractAddress, updatedAt: nowIso },
+        { merge: true }
+      ).catch((err) => console.warn('Firestore user ctContract sync notice:', err));
+
+      setDoc(
+        doc(firestoreDb, 'ct_contracts', currentFbUser.uid),
+        {
+          uid: currentFbUser.uid,
+          ctContractAddress,
+          tokenContract: '0xc07E97021A8F4B2b8D1c63e4f8A91D52e7B3a901',
+          network: 'Ethereum Sepolia Testnet (Staged)',
+          chainId: 11155111,
+          assignedAt: nowIso,
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      ).catch((err) => {
+        try {
+          handleFirestoreError(err, OperationType.WRITE, `ct_contracts/${currentFbUser.uid}`);
+        } catch {
+          console.warn('Firestore ct_contracts sync notice:', err);
+        }
+      });
+    }
+  }, []);
+
+  const isAdmin = Boolean(firebaseUser && user?.role === 'admin' && adminVerified);
+
   const value = useMemo(
     () => ({
       user,
       firebaseUser,
       web3Account,
       loading,
+      isAdmin,
+      adminVerified,
+      verifyAdminSession,
       loginWithGoogle,
       registerWithEmail,
       loginWithEmail,
@@ -481,9 +586,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logout,
       refreshProfile,
       updateBalancesLocally,
+      updateCtContractLocally,
       getAuthHeader,
     }),
-    [user, firebaseUser, web3Account, loading, refreshProfile, updateBalancesLocally, getAuthHeader]
+    [user, firebaseUser, web3Account, loading, isAdmin, adminVerified, verifyAdminSession, refreshProfile, updateBalancesLocally, updateCtContractLocally, getAuthHeader]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

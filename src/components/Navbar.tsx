@@ -16,29 +16,44 @@ import {
   Info,
   Bell,
   Gem,
+  Link2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
 import { PageView } from '../types/index.ts';
 
 export const Navbar: React.FC = () => {
-  const { user, firebaseUser, web3Account, logout } = useAuth();
-  const { activePage, setActivePage, setAuthModalOpen, markets, unreadAlertsCount, openPriceAlertModal, clearUnreadAlerts } = useTrading();
+  const { user, isAdmin, logout } = useAuth();
+  const {
+    activePage,
+    setActivePage,
+    setAuthModalOpen,
+    markets,
+    unreadAlertsCount,
+    clearUnreadAlerts,
+    maintenanceMode,
+  } = useTrading();
   const [profileOpen, setProfileOpen] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
 
   const navItems: { id: PageView; label: string; icon: React.ReactNode; badge?: string }[] = [
     { id: 'home', label: 'Overview', icon: <TrendingUp className="w-4 h-4" /> },
-    { id: 'terminal', label: 'Terminal', icon: <LayoutDashboard className="w-4 h-4" /> },
+    {
+      id: 'terminal',
+      label: 'Terminal',
+      icon: <LayoutDashboard className="w-4 h-4" />,
+      badge: maintenanceMode ? 'LOCKED' : undefined,
+    },
     { id: 'markets', label: 'Markets', icon: <TrendingUp className="w-4 h-4" /> },
     { id: 'alerts', label: 'Alerts', icon: <Bell className="w-4 h-4 text-[#D4AF37]" />, badge: unreadAlertsCount > 0 ? `${unreadAlertsCount}` : undefined },
     { id: 'portfolio', label: 'Portfolio', icon: <Wallet className="w-4 h-4" /> },
     { id: 'token', label: 'CT Token', icon: <Coins className="w-4 h-4 text-[#D4AF37]" />, badge: 'ERC-20' },
+    { id: 'reown-pay', label: 'Reown Pay', icon: <Link2 className="w-4 h-4 text-sky-400" /> },
     { id: 'rewards', label: 'CT Rewards', icon: <Sparkles className="w-4 h-4 text-[#D4AF37]" /> },
     { id: 'nfts', label: 'NFT Vault', icon: <Gem className="w-4 h-4 text-[#D4AF37]" />, badge: 'NEW' },
     { id: 'watchlist', label: 'Watchlist', icon: <Star className="w-4 h-4" /> },
     { id: 'history', label: 'History', icon: <Clock className="w-4 h-4" /> },
-    { id: 'admin', label: 'Admin', icon: <Shield className="w-4 h-4 text-[#D4AF37]" /> },
+    ...(isAdmin ? [{ id: 'admin' as PageView, label: 'Admin', icon: <Shield className="w-4 h-4 text-[#D4AF37]" /> }] : []),
     { id: 'about', label: 'About', icon: <Info className="w-4 h-4" /> },
   ];
 
@@ -82,12 +97,12 @@ export const Navbar: React.FC = () => {
       </div>
 
       {/* Main Navigation Bar */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
         {/* Brand Logo & Tagline */}
-        <div className="flex items-center gap-8">
+        <div className="flex items-center gap-4 xl:gap-5 min-w-0 flex-1">
           <button
             onClick={() => handleNav('home')}
-            className="flex items-center gap-3 text-left group transition-transform"
+            className="flex items-center gap-3 text-left group transition-transform shrink-0"
           >
             {/* Black & Gold Institutional Crest */}
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-black border border-[#D4AF37]/60 flex items-center justify-center shadow-lg shadow-[#D4AF37]/20 group-hover:border-[#D4AF37] group-hover:shadow-[#D4AF37]/40 transition-all">
@@ -113,14 +128,14 @@ export const Navbar: React.FC = () => {
           </button>
 
           {/* Desktop Nav Links */}
-          <nav className="hidden xl:flex items-center gap-1">
+          <nav className="hidden xl:flex items-center gap-0.5 overflow-x-auto no-scrollbar min-w-0">
             {navItems.map((item) => {
               const isActive = activePage === item.id;
               return (
                 <button
                   key={item.id}
                   onClick={() => handleNav(item.id)}
-                  className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  className={`relative flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all ${
                     isActive
                       ? 'bg-[#161D2C] text-[#D4AF37] font-semibold border border-[#D4AF37]/30 shadow-sm'
                       : 'text-gray-400 hover:text-white hover:bg-white/5'
@@ -129,7 +144,7 @@ export const Navbar: React.FC = () => {
                   {item.icon}
                   <span>{item.label}</span>
                   {item.badge && (
-                    <span className="px-1 py-0.2 text-[9px] font-bold rounded bg-[#D4AF37] text-black">
+                    <span className="px-1 py-0.5 text-[9px] font-bold rounded bg-[#D4AF37] text-black">
                       {item.badge}
                     </span>
                   )}
@@ -140,7 +155,7 @@ export const Navbar: React.FC = () => {
         </div>
 
         {/* Right Action Area */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5 shrink-0">
           {/* CoreToken (CT) Wallet & Smart Contract Pill */}
           <button
             onClick={() => handleNav('token')}
@@ -195,7 +210,7 @@ export const Navbar: React.FC = () => {
                     <span className="text-xs font-semibold text-white truncate max-w-[110px]">
                       {user.displayName || 'Trader'}
                     </span>
-                    {user.role === 'admin' && (
+                    {isAdmin && (
                       <span className="text-[9px] px-1 py-0.5 rounded bg-[#D4AF37]/20 text-[#D4AF37] font-bold">
                         ADMIN
                       </span>
@@ -244,6 +259,16 @@ export const Navbar: React.FC = () => {
                     </button>
                     <button
                       onClick={() => {
+                        handleNav('reown-pay');
+                        setProfileOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2 text-xs text-sky-300 hover:text-white hover:bg-white/5 transition-colors"
+                    >
+                      <Link2 className="w-4 h-4 text-sky-400" />
+                      Reown Payment Gateway
+                    </button>
+                    <button
+                      onClick={() => {
                         handleNav('settings');
                         setProfileOpen(false);
                       }}
@@ -252,7 +277,7 @@ export const Navbar: React.FC = () => {
                       <SettingsIcon className="w-4 h-4 text-gray-400" />
                       Platform Settings
                     </button>
-                    {user.role === 'admin' && (
+                    {isAdmin && (
                       <button
                         onClick={() => {
                           handleNav('admin');

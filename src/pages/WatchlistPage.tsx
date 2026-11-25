@@ -91,7 +91,7 @@ export const WatchlistPage: React.FC = () => {
                             <span className="font-bold text-white group-hover:text-[#D4AF37] transition-colors">
                               {m.symbol}
                             </span>
-                            <span className="px-1.5 py-0.2 text-[9px] uppercase rounded bg-[#161F30] text-gray-400">
+                            <span className="px-1.5 py-0.5 text-[9px] uppercase rounded bg-[#161F30] text-gray-400">
                               {m.category}
                             </span>
                           </div>

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Sparkles, Loader2, RefreshCw } from 'lucide-react';
+import { ShieldCheck, Sparkles, Loader2, RefreshCw, Lock, Copy, Check } from 'lucide-react';
 import { MarketAsset } from '../types/index.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useTrading } from '../context/TradingContext.tsx';
+import { isCtTradeSymbol } from '../utils/ctContractAddress.ts';
+import { formatShortAddress } from '../config/coreTokenContract.ts';
 
 interface OrderFormProps {
   market: MarketAsset;
@@ -10,8 +12,9 @@ interface OrderFormProps {
 }
 
 export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) => {
-  const { user } = useAuth();
-  const { executeOrder, resetBalances } = useTrading();
+  const { user, isAdmin } = useAuth();
+  const { executeOrder, resetBalances, maintenanceMode } = useTrading();
+  const isOrderBlocked = maintenanceMode && !isAdmin;
 
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
@@ -19,6 +22,8 @@ export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) =
   const [amount, setAmount] = useState<string>('');
   const [percentage, setPercentage] = useState<number>(0);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [copiedCt, setCopiedCt] = useState<boolean>(false);
+  const isCtPair = isCtTradeSymbol(market.symbol);
 
   // Sync price when market or order book selected price changes
   useEffect(() => {
@@ -85,6 +90,7 @@ export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) =
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isOrderBlocked) return;
     if (!amount || numAmount <= 0) return;
 
     setSubmitting(true);
@@ -185,6 +191,14 @@ export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) =
         </div>
       </div>
 
+      {/* Maintenance Mode Notice for Non-Admins */}
+      {isOrderBlocked && (
+        <div className="mb-3 p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center gap-2 text-xs font-mono text-amber-300">
+          <Lock className="w-3.5 h-3.5 shrink-0" />
+          <span>Order execution paused during global maintenance.</span>
+        </div>
+      )}
+
       {/* Order Input Form */}
       <form onSubmit={handleSubmit} className="flex-1 flex flex-col justify-between space-y-4">
         <div className="space-y-3.5">
@@ -199,10 +213,10 @@ export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) =
                 type="number"
                 step="any"
                 value={price}
-                disabled={orderType === 'market'}
+                disabled={isOrderBlocked || orderType === 'market'}
                 onChange={(e) => setPrice(e.target.value)}
                 className={`w-full bg-[#0D121C] border border-[#1A2234] rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-[#D4AF37] ${
-                  orderType === 'market' ? 'opacity-70 cursor-not-allowed' : ''
+                  isOrderBlocked || orderType === 'market' ? 'opacity-70 cursor-not-allowed' : ''
                 }`}
               />
               {orderType === 'market' && (
@@ -225,9 +239,10 @@ export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) =
                 step="any"
                 placeholder="0.00"
                 value={amount}
+                disabled={isOrderBlocked}
                 onChange={handleAmountChange}
                 required
-                className="w-full bg-[#0D121C] border border-[#1A2234] rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-[#D4AF37]"
+                className="w-full bg-[#0D121C] border border-[#1A2234] rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-[#D4AF37] disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
           </div>
@@ -238,8 +253,9 @@ export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) =
               <button
                 key={pct}
                 type="button"
+                disabled={isOrderBlocked}
                 onClick={() => handlePercentage(pct)}
-                className={`py-1 text-[11px] font-mono rounded transition-colors border ${
+                className={`py-1 text-[11px] font-mono rounded transition-colors border disabled:opacity-50 disabled:cursor-not-allowed ${
                   percentage === pct
                     ? 'bg-[#D4AF37]/20 border-[#D4AF37] text-[#D4AF37] font-semibold'
                     : 'bg-[#0D121C] border-[#1A2234] text-gray-400 hover:text-white'
@@ -263,6 +279,28 @@ export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) =
               </span>
               <span className="text-emerald-400">0.00% (VIP Demo Tier)</span>
             </div>
+            {isCtPair && (
+              <div className="flex justify-between items-center text-gray-400 pt-1 border-t border-[#1A2234]/70">
+                <span>CT Trader Contract:</span>
+                {user?.ctContractAddress ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(user.ctContractAddress!);
+                      setCopiedCt(true);
+                      setTimeout(() => setCopiedCt(false), 1800);
+                    }}
+                    className="inline-flex items-center gap-1 text-cyan-300 hover:text-cyan-200 font-semibold tabular-nums"
+                    title={user.ctContractAddress}
+                  >
+                    <span>{formatShortAddress(user.ctContractAddress)}</span>
+                    {copiedCt ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                ) : (
+                  <span className="text-[#D4AF37]">Auto-assigned on trade</span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -270,14 +308,21 @@ export const OrderForm: React.FC<OrderFormProps> = ({ market, selectedPrice }) =
         <div>
           <button
             type="submit"
-            disabled={submitting || !amount || numAmount <= 0}
+            disabled={isOrderBlocked || submitting || !amount || numAmount <= 0}
             className={`w-full py-3 rounded-lg text-sm font-semibold tracking-wider uppercase transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed ${
-              side === 'buy'
+              isOrderBlocked
+                ? 'bg-[#1A2234] text-amber-300 border border-amber-500/30 shadow-none'
+                : side === 'buy'
                 ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-black shadow-emerald-500/20'
                 : 'bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-400 hover:to-rose-500 text-white shadow-rose-500/20'
             }`}
           >
-            {submitting ? (
+            {isOrderBlocked ? (
+              <>
+                <Lock className="w-4 h-4" />
+                Maintenance Lock Active
+              </>
+            ) : submitting ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Simulating Execution...

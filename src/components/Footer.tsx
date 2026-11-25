@@ -1,10 +1,12 @@
 import React from 'react';
 import { ShieldCheck, Database, Award, ArrowUpRight } from 'lucide-react';
 import { useTrading } from '../context/TradingContext.tsx';
+import { useAuth } from '../context/AuthContext.tsx';
 import { CORETOKEN_SPEC } from '../config/coreTokenContract.ts';
 
 export const Footer: React.FC = () => {
   const { setActivePage } = useTrading();
+  const { isAdmin } = useAuth();
 
   return (
     <footer className="w-full bg-[#05070A] border-t border-[#1A2234] text-gray-400 text-xs">
@@ -63,6 +65,11 @@ export const Footer: React.FC = () => {
                 </button>
               </li>
               <li>
+                <button onClick={() => setActivePage('reown-pay')} className="hover:text-sky-400 transition-colors flex items-center gap-1">
+                  Reown WalletConnect Pay <ArrowUpRight className="w-3 h-3 text-sky-400" />
+                </button>
+              </li>
+              <li>
                 <button onClick={() => setActivePage('rewards')} className="hover:text-[#D4AF37] transition-colors flex items-center gap-1">
                   CT Rewards Center <ArrowUpRight className="w-3 h-3 text-[#D4AF37]" />
                 </button>
@@ -73,8 +80,11 @@ export const Footer: React.FC = () => {
                 </button>
               </li>
               <li>
-                <button onClick={() => setActivePage('admin')} className="hover:text-[#D4AF37] transition-colors">
-                  Administrator Portal
+                <button
+                  onClick={() => setActivePage(isAdmin ? 'admin' : 'admin-login')}
+                  className="hover:text-[#D4AF37] transition-colors"
+                >
+                  {isAdmin ? 'Admin Operations Console' : 'Admin Sign In'}
                 </button>
               </li>
             </ul>

@@ -8,25 +8,25 @@ import {
   DollarSign,
   Percent,
   Sparkles,
+  Download,
 } from 'lucide-react';
+import {
+  PortfolioPerformancePoint,
+  generatePortfolioPerformanceSeries,
+} from '../utils/csvExport.ts';
 
-export interface DataPoint {
-  date: Date;
-  dateStr: string;
-  balance: number;
-  change: number;
-  changePercent: number;
-  deposit?: number;
-}
+export type DataPoint = PortfolioPerformancePoint;
 
 interface PortfolioGrowthChartProps {
   currentValue: number;
   initialBalance?: number;
+  onExportPerformanceCsv?: (timeframeDays: 7 | 14 | 30) => void;
 }
 
 export const PortfolioGrowthChart: React.FC<PortfolioGrowthChartProps> = ({
   currentValue,
   initialBalance = 100000,
+  onExportPerformanceCsv,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -35,54 +35,9 @@ export const PortfolioGrowthChart: React.FC<PortfolioGrowthChartProps> = ({
   const [hoveredPoint, setHoveredPoint] = useState<DataPoint | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
 
-  // Generate realistic 30-day historical equity curve anchored to the user's live current portfolio value
+  // Generate 30-day historical equity curve anchored to live portfolio value (shared with CSV exporter)
   const historicalData = useMemo(() => {
-    const points: DataPoint[] = [];
-    const days = 30;
-    const now = new Date();
-
-    // Baseline calculation working backward from live current equity
-    // We synthesize a realistic institutional crypto trader trajectory with small drawdowns and steady upward alpha
-    const seedDeltas = [
-      0.0, -0.012, 0.024, 0.018, -0.006, 0.031, 0.015, -0.019, 0.008, 0.027,
-      -0.014, 0.022, 0.019, -0.008, 0.035, 0.012, -0.015, 0.028, 0.005, -0.011,
-      0.032, 0.018, -0.021, 0.042, 0.015, -0.009, 0.026, 0.031, -0.007, 0.019
-    ];
-
-    // Compute cumulative factors
-    let factor = 1.0;
-    const factors: number[] = [1.0];
-    for (let i = 1; i < days; i++) {
-      const step = seedDeltas[i % seedDeltas.length];
-      factor = factor * (1 + step);
-      factors.push(factor);
-    }
-
-    const endFactor = factors[factors.length - 1];
-    // Scale baseline so the final day exactly matches currentValue
-    const startVal = currentValue / endFactor;
-
-    let prevBal = startVal;
-    for (let i = 0; i < days; i++) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - (days - 1 - i));
-      d.setHours(0, 0, 0, 0);
-
-      const bal = i === days - 1 ? currentValue : Math.round(startVal * factors[i] * 100) / 100;
-      const change = bal - prevBal;
-      const changePercent = prevBal > 0 ? (change / prevBal) * 100 : 0;
-      prevBal = bal;
-
-      points.push({
-        date: d,
-        dateStr: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        balance: bal,
-        change: i === 0 ? 0 : change,
-        changePercent: i === 0 ? 0 : changePercent,
-      });
-    }
-
-    return points;
+    return generatePortfolioPerformanceSeries(currentValue, 30);
   }, [currentValue]);
 
   // Filter based on selected timeframe (7D, 14D, 30D)
@@ -423,6 +378,20 @@ export const PortfolioGrowthChart: React.FC<PortfolioGrowthChartProps> = ({
               </button>
             ))}
           </div>
+
+          {onExportPerformanceCsv && (
+            <button
+              type="button"
+              onClick={() =>
+                onExportPerformanceCsv(timeframe === '7D' ? 7 : timeframe === '14D' ? 14 : 30)
+              }
+              className="px-3 py-1.5 bg-[#0D121D] hover:bg-[#161F30] border border-[#D4AF37]/40 text-[#D4AF37] font-mono text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all"
+              title={`Export ${timeframe} portfolio performance history & valuation CSV`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export {timeframe} CSV</span>
+            </button>
+          )}
         </div>
       </div>
 
